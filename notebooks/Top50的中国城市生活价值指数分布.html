@@ -9,11 +9,11 @@
     
 </head>
 <body >
-    <div id="762c69d4692b432f87b237df935bb626" class="chart-container" style="width:900px; height:500px; "></div>
+    <div id="8cf068603b5e4692bde577a15c7ccd4a" class="chart-container" style="width:900px; height:500px; "></div>
     <script>
-        var chart_762c69d4692b432f87b237df935bb626 = echarts.init(
-            document.getElementById('762c69d4692b432f87b237df935bb626'), 'white', {renderer: 'canvas', locale: 'ZH'});
-        var option_762c69d4692b432f87b237df935bb626 = {
+        var chart_8cf068603b5e4692bde577a15c7ccd4a = echarts.init(
+            document.getElementById('8cf068603b5e4692bde577a15c7ccd4a'), 'white', {renderer: 'canvas', locale: 'ZH'});
+        var option_8cf068603b5e4692bde577a15c7ccd4a = {
     "animation": true,
     "animationThreshold": 2000,
     "animationDuration": 1000,
@@ -516,7 +516,7 @@
     ],
     "visualMap": {
         "show": true,
-        "type": "continuous",
+        "type": "piecewise",
         "min": 8.513729308666017,
         "max": 13.84244670991659,
         "inRange": {
@@ -534,8 +534,28 @@
         "padding": 5,
         "showLabel": true,
         "itemWidth": 20,
-        "itemHeight": 140,
-        "borderWidth": 0
+        "itemHeight": 14,
+        "borderWidth": 0,
+        "pieces": [
+            {
+                "min": 13,
+                "label": "\u6781\u9ad8"
+            },
+            {
+                "min": 12,
+                "max": 13,
+                "label": "\u8f83\u9ad8"
+            },
+            {
+                "min": 11,
+                "max": 12,
+                "label": "\u4e2d\u7b49"
+            },
+            {
+                "max": 11,
+                "label": "\u8f83\u4f4e"
+            }
+        ]
     },
     "geo": {
         "map": "china",
@@ -548,7 +568,7 @@
         "clip": false
     }
 };
-        chart_762c69d4692b432f87b237df935bb626.setOption(option_762c69d4692b432f87b237df935bb626);
+        chart_8cf068603b5e4692bde577a15c7ccd4a.setOption(option_8cf068603b5e4692bde577a15c7ccd4a);
     </script>
 </body>
 </html>
