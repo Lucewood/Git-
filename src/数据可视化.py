@@ -43,42 +43,92 @@ print("\n省级聚合样例：\n", province_summary.head(5), sep="")
 #住房可负担性指数排名前20的城市的数据显示
 #!!!!!!!!!!!!!!!!!!!!
 import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib
+
+# 设置中文字体
+matplotlib.rcParams['font.sans-serif'] = ['SimHei']
+matplotlib.rcParams['axes.unicode_minus'] = False
 
 # 取 Top20
 top20 = (
     df.sort_values("value_index", ascending=False)
-      .head(20)
-      .reset_index(drop=True)
+    .head(20)
+    .reset_index(drop=True)
 )
 
-top20
+# 创建画布
+fig, ax = plt.subplots(figsize=(12, 8))
+
+# 隐藏坐标轴
+ax.axis("off")
+
+# 绘制表格
+table = ax.table(
+    cellText=top20.values,
+    colLabels=top20.columns,
+    cellLoc="center",
+    loc="center"
+)
+
+# 设置字体大小
+table.auto_set_font_size(False)
+table.set_fontsize(10)
+
+# 设置表格大小
+table.scale(1.2, 1.5)
+
+save_path = r"C:\Users\86132\Desktop\中国城市生活成本与幸福感分析可视化\images\住房可负担性指数排名前20的城市.png"
+
+plt.savefig(
+    save_path,
+    bbox_inches="tight",
+    dpi=300
+)
+
+plt.close()
 
 #!!!!!!!!!!!!!!!!!!!!
 #全国300个主要城市的住房可负担性指数的柱状图分布分析
 #!!!!!!!!!!!!!!!!!!!!
 import matplotlib.pyplot as plt
 import numpy as np
+
 #按价值指数降序排序
 top = df.sort_values("value_index", ascending=False).reset_index(drop=True)
+
 #创建画布
 fig, ax = plt.subplots(figsize=(12, 6))
+
 #绘制柱状图
 ax.bar(range(len(top)), top["value_index"], color="steelblue")
+
 #每50个城市显示一个排名
 step = 50
 ticks = np.arange(0, len(top), step)
 
 ax.set_xticks(ticks)
 ax.set_xticklabels([str(i + 1) for i in ticks])
+
 #设置标题和坐标轴标签
 ax.set_title("City Value Index (Income / House Price)", fontsize=16)
 ax.set_xlabel("City Rank", fontsize=12)
 ax.set_ylabel("Value Index", fontsize=12)
+
 #添加横向网格线
 ax.grid(axis="y", linestyle="--", alpha=0.5)
 
 plt.tight_layout()
-plt.show()
+
+save_path = r"C:\Users\86132\Desktop\中国城市生活成本与幸福感分析可视化\images\全国300个主要城市的住房可负担性指数的柱状图.png"
+
+plt.savefig(
+    save_path,
+    dpi=300,
+    bbox_inches="tight"
+)
+
+plt.close()
 
 #!!!!!!!!!!!!!!!!!!!!
 #全国300个主要城市的幸福度的条形图分布分析
@@ -102,7 +152,16 @@ ax.set_title("City Happiness Ranking")
 ax.grid(axis="x", linestyle="--", alpha=0.5)
 
 plt.tight_layout()
-plt.show()
+
+save_path = r"C:\Users\86132\Desktop\中国城市生活成本与幸福感分析可视化\images\全国300个主要城市的幸福度的条形图.png"
+
+plt.savefig(
+    save_path,
+    dpi=300,
+    bbox_inches="tight"
+)
+
+plt.close()
 
 #!!!!!!!!!!!!!!!!!!!!
 #全国300个主要城市的收入与幸福度之间的散点图分布分析
@@ -110,15 +169,35 @@ plt.show()
 import seaborn as sns
 
 sns.scatterplot(data=df, x="income", y="happiness")
+
 plt.title("Income vs Happiness")
-plt.show()
+
+save_path = r"C:\Users\86132\Desktop\中国城市生活成本与幸福感分析可视化\images\全国300个主要城市的收入与幸福度之间的散点图.png"
+
+plt.savefig(
+    save_path,
+    dpi=300,
+    bbox_inches="tight"
+)
+
+plt.close()
 
 #!!!!!!!!!!!!!!!!!!!!
 #全国300个主要城市的房价与幸福度之间的散点图分布分析
 #!!!!!!!!!!!!!!!!!!!!
 sns.scatterplot(data=df, x="house_price", y="happiness")
+
 plt.title("House Price vs Happiness")
-plt.show()
+
+save_path = r"C:\Users\86132\Desktop\中国城市生活成本与幸福感分析可视化\images\全国300个主要城市的房价与幸福度之间的散点图.png"
+
+plt.savefig(
+    save_path,
+    dpi=300,
+    bbox_inches="tight"
+)
+
+plt.close()
 
 #!!!!!!!!!!!!!!!!!!!!
 #中国城市生活成本与幸福感分析的可视化宜居度map地图
