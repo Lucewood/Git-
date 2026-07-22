@@ -8,6 +8,11 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import matplotlib
 from io import BytesIO
+from pathlib import Path
+
+# 获取数据目录的绝对路径（相对于当前脚本文件）
+BASE_DIR = Path(__file__).resolve().parent.parent
+DATA_DIR = BASE_DIR / "data"
 
 # ============ 页面配置 ============
 st.set_page_config(
@@ -79,11 +84,11 @@ st.markdown("""
 @st.cache_data
 def load_data():
     """加载并合并所有数据源"""
-    happiness = pd.read_csv("data/happiness.csv")
-    income = pd.read_csv("data/income.csv")
-    house = pd.read_csv("data/house_price.csv")
-    province = pd.read_csv("data/province.csv")
-    location = pd.read_csv("data/location.csv")
+    happiness = pd.read_csv(DATA_DIR / "happiness.csv")
+    income = pd.read_csv(DATA_DIR / "income.csv")
+    house = pd.read_csv(DATA_DIR / "house_price.csv")
+    province = pd.read_csv(DATA_DIR / "province.csv")
+    location = pd.read_csv(DATA_DIR / "location.csv")
 
     # 去重
     for data in [happiness, income, house, province, location]:
