@@ -94,16 +94,17 @@ def load_data():
     for data in [happiness, income, house, province, location]:
         data.drop_duplicates("city", inplace=True)
 
-    # 合并
-    df = (happiness
-          .merge(income, on="city")
-          .merge(house, on="city")
-          .merge(province, on="city")
-          .merge(location, on="city"))
+    # 以 province 为基准进行左连接，确保保留所有有省份归属的城市
+    df = (province
+          .merge(happiness, on="city", how="left")
+          .merge(income, on="city", how="left")
+          .merge(house, on="city", how="left")
+          .merge(location, on="city", how="left"))
 
     # 计算住房可负担性指数
     df['value_index'] = df['income'] / df['house_price']
-    df.dropna(inplace=True)
+    # 仅剔除缺失关键指标（幸福度、收入、房价）的行，location 可缺失
+    df.dropna(subset=['happiness', 'income', 'house_price'], inplace=True)
 
     return df, province
 
@@ -483,7 +484,8 @@ st.markdown('<h2 class="section-title">🏆 住房可负担指数 TOP 20 城市�
 top20 = filtered_df.nlargest(20, 'value_index').reset_index(drop=True)
 top20_display = top20[['city', 'province', 'happiness', 'income', 'house_price', 'value_index']].copy()
 top20_display.columns = ['城市', '省份', '幸福度', '年收入', '房价(元/㎡)', '可负担指数']
-top20_display.index = range(1, 21)
+# 动态设置行号，防止筛选后数据不足20行时报错
+top20_display.index = range(1, len(top20_display) + 1)
 
 col_a, col_b = st.columns([1.2, 1])
 
