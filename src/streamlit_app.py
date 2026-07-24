@@ -90,16 +90,16 @@ def load_data():
     province = pd.read_csv(DATA_DIR / "province.csv")
     location = pd.read_csv(DATA_DIR / "location.csv")
 
-    # 去重
-    for data in [happiness, income, house, province, location]:
-        data.drop_duplicates("city", inplace=True)
-
     # 以 province 为基准进行左连接，确保保留所有有省份归属的城市
     df = (province
           .merge(happiness, on="city", how="left")
           .merge(income, on="city", how="left")
           .merge(house, on="city", how="left")
           .merge(location, on="city", how="left"))
+    
+    # 合并后按城市去重（保留第一行），确保每个城市只有一条记录
+    # 不使用 drop_duplicates 单独去除每个文件，防止错误删除城市
+    df = df.groupby('city').first().reset_index()
 
     # 计算住房可负担性指数
     df['value_index'] = df['income'] / df['house_price']
@@ -140,7 +140,7 @@ with st.sidebar:
         "年收入范围（元）",
         min_value=int(df['income'].min()),
         max_value=int(df['income'].max()),
-        value=(int(df['income'].quantile(0.05)), int(df['income'].quantile(0.95))),
+        value=(int(df['income'].min()), int(df['income'].max())),
         step=1000
     )
 
@@ -148,7 +148,7 @@ with st.sidebar:
         "房价范围（元/㎡）",
         min_value=int(df['house_price'].min()),
         max_value=int(df['house_price'].max()),
-        value=(int(df['house_price'].quantile(0.05)), int(df['house_price'].quantile(0.95))),
+        value=(int(df['house_price'].min()), int(df['house_price'].max())),
         step=500
     )
 
