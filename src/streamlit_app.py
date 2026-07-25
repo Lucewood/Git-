@@ -434,6 +434,34 @@ with col2:
     st.pyplot(fig)
     plt.close()
 
+# ============ 地理可视化地图 ============
+NOTEBOOKS_DIR = BASE_DIR / "notebooks"
+st.markdown('<h2 class="section-title">🗺️ 中国城市地理分布地图</h2>', unsafe_allow_html=True)
+
+col_map1, col_map2 = st.columns(2)
+
+with col_map1:
+    st.markdown("### 中国各省市宜居度地图")
+    map1_path = NOTEBOOKS_DIR / "中国各省市宜居度地图.html"
+    if map1_path.exists():
+        map1_html = map1_path.read_text(encoding="utf-8")
+        # 替换固定宽度为 100% 以自适应容器
+        map1_html = map1_html.replace('width:900px;', 'width:100%;')
+        st.components.v1.html(map1_html, height=520, scrolling=False)
+    else:
+        st.warning("宜居度地图文件未找到")
+
+with col_map2:
+    st.markdown("### Top50 城市生活价值指数分布")
+    map2_path = NOTEBOOKS_DIR / "Top50的中国城市生活价值指数分布.html"
+    if map2_path.exists():
+        map2_html = map2_path.read_text(encoding="utf-8")
+        # 替换固定宽度为 100% 以自适应容器
+        map2_html = map2_html.replace('width:900px;', 'width:100%;')
+        st.components.v1.html(map2_html, height=520, scrolling=False)
+    else:
+        st.warning("城市价值指数地图文件未找到")
+
 # ============ 第五行：数据表格 ============
 st.markdown('<h2 class="section-title">📋 完整数据浏览</h2>', unsafe_allow_html=True)
 
