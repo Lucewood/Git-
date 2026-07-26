@@ -379,7 +379,52 @@ with col2:
     st.pyplot(fig)
     plt.close()
 
-# ============ 第四行：省份聚合分析 ============
+# ============ 第四行：TOP 20 住房可负担指数详表 ============
+st.markdown('<h2 class="section-title">🏆 住房可负担指数 TOP 20 城市详情</h2>', unsafe_allow_html=True)
+
+top20 = filtered_df.nlargest(20, 'value_index').reset_index(drop=True)
+top20_display = top20[['city', 'province', 'happiness', 'income', 'house_price', 'value_index']].copy()
+top20_display.columns = ['城市', '省份', '幸福度', '年收入', '房价(元/㎡)', '可负担指数']
+# 动态设置行号，防止筛选后数据不足20行时报错
+top20_display.index = range(1, len(top20_display) + 1)
+
+col_a, col_b = st.columns([1.2, 1])
+
+with col_a:
+    st.dataframe(
+        top20_display.style.format({
+            '年收入': '{:,.0f}',
+            '房价(元/㎡)': '{:,.0f}',
+            '幸福度': '{:.1f}',
+            '可负担指数': '{:.2f}'
+        }).background_gradient(subset=['可负担指数'], cmap='Greens'),
+        use_container_width=True
+    )
+
+with col_b:
+    # 可视化 TOP 20 的对比
+    fig, ax = plt.subplots(figsize=(6, 5.5))
+    x = range(len(top20))
+    width = 0.35
+
+    sorted_top = top20.sort_values('value_index', ascending=True)
+    bars1 = ax.barh([i + width / 2 for i in range(len(sorted_top))],
+                    sorted_top['value_index'], width, color='#f59e0b', label='可负担指数', edgecolor='white')
+    ax.set_yticks(range(len(sorted_top)))
+    ax.set_yticklabels(sorted_top['city'], fontsize=9)
+    ax.set_xlabel("可负担指数", fontsize=11)
+    ax.set_title("TOP 20 住房可负担指数", fontsize=13, fontweight='bold')
+    ax.legend(fontsize=9)
+    ax.grid(axis='x', alpha=0.3, linestyle='--')
+
+    for bar, val in zip(bars1, sorted_top['value_index']):
+        ax.text(bar.get_width() + 0.05, bar.get_y() + bar.get_height() / 2,
+                f'{val:.2f}', va='center', fontsize=8)
+
+    st.pyplot(fig)
+    plt.close()
+
+# ============ 第五行：省份聚合分析 ============
 st.markdown('<h2 class="section-title">🗺️ 省份维度聚合分析</h2>', unsafe_allow_html=True)
 
 province_agg = filtered_df.groupby('province').agg({
@@ -462,7 +507,7 @@ with col_map2:
     else:
         st.warning("城市价值指数地图文件未找到")
 
-# ============ 第五行：数据表格 ============
+# ============ 第六行：数据表格 ============
 st.markdown('<h2 class="section-title">📋 完整数据浏览</h2>', unsafe_allow_html=True)
 
 tab1, tab2 = st.tabs(["🏙️ 城市明细数据", "🗺️ 省份聚合数据"])
@@ -505,51 +550,6 @@ with tab2:
         use_container_width=True,
         height=500
     )
-
-# ============ 第六行：TOP 20 住房可负担指数详表 ============
-st.markdown('<h2 class="section-title">🏆 住房可负担指数 TOP 20 城市详情</h2>', unsafe_allow_html=True)
-
-top20 = filtered_df.nlargest(20, 'value_index').reset_index(drop=True)
-top20_display = top20[['city', 'province', 'happiness', 'income', 'house_price', 'value_index']].copy()
-top20_display.columns = ['城市', '省份', '幸福度', '年收入', '房价(元/㎡)', '可负担指数']
-# 动态设置行号，防止筛选后数据不足20行时报错
-top20_display.index = range(1, len(top20_display) + 1)
-
-col_a, col_b = st.columns([1.2, 1])
-
-with col_a:
-    st.dataframe(
-        top20_display.style.format({
-            '年收入': '{:,.0f}',
-            '房价(元/㎡)': '{:,.0f}',
-            '幸福度': '{:.1f}',
-            '可负担指数': '{:.2f}'
-        }).background_gradient(subset=['可负担指数'], cmap='Greens'),
-        use_container_width=True
-    )
-
-with col_b:
-    # 可视化 TOP 20 的对比
-    fig, ax = plt.subplots(figsize=(6, 5.5))
-    x = range(len(top20))
-    width = 0.35
-
-    sorted_top = top20.sort_values('value_index', ascending=True)
-    bars1 = ax.barh([i + width / 2 for i in range(len(sorted_top))],
-                    sorted_top['value_index'], width, color='#f59e0b', label='可负担指数', edgecolor='white')
-    ax.set_yticks(range(len(sorted_top)))
-    ax.set_yticklabels(sorted_top['city'], fontsize=9)
-    ax.set_xlabel("可负担指数", fontsize=11)
-    ax.set_title("TOP 20 住房可负担指数", fontsize=13, fontweight='bold')
-    ax.legend(fontsize=9)
-    ax.grid(axis='x', alpha=0.3, linestyle='--')
-
-    for bar, val in zip(bars1, sorted_top['value_index']):
-        ax.text(bar.get_width() + 0.05, bar.get_y() + bar.get_height() / 2,
-                f'{val:.2f}', va='center', fontsize=8)
-
-    st.pyplot(fig)
-    plt.close()
 
 # ============ 页脚 ============
 st.markdown("---")
