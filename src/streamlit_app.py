@@ -14,6 +14,7 @@ v2.0 工业级重构说明
 """
 from __future__ import annotations
 
+import hashlib
 import sys
 from io import BytesIO
 from pathlib import Path
@@ -63,6 +64,123 @@ st.set_page_config(
 
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 charts.setup_plot_style()
+
+# ---------------- 辅助函数（与页面状态无关，统一在此定义） ----------------
+def to_excel_bytes(data: pd.DataFrame) -> bytes:
+    """将 DataFrame 序列化为 Excel 字节流。"""
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        data.to_excel(writer, index=False, sheet_name="城市数据")
+    return buffer.getvalue()
+
+
+def _stable_digest(text: str) -> str:
+    """HTML 内容稳定摘要（用于生成可复用的临时文件名，避免 hash() 随机化）。"""
+    return hashlib.md5(text.encode("utf-8")).hexdigest()[:16]
+
+
+def _styled_table(
+    df: pd.DataFrame,
+    columns: list[str],
+    fmt_dict: dict,
+    gradient_col: str | None = None,
+    cmap: str | None = None,
+):
+    """选取列 → 中文列名 → 1 起始索引，并统一套用表格样式。
+
+    返回 pandas Styler，可直接传给 st.dataframe。
+    """
+    display = df[columns].copy()
+    display.columns = [COLUMN_LABELS[c] for c in columns]
+    display.index = range(1, len(display) + 1)
+    return widgets.fmt_table(
+        display, fmt_dict, gradient_col=gradient_col, cmap=cmap
+    )
+
+
+@st.cache_data(show_spinner=False)
+def load_map_html(file_name: str) -> str | None:
+    """读取并预处理 HTML 地图内容（缓存字符串，文件变化时自动失效）。"""
+    path = NOTEBOOKS_DIR / file_name
+    if not path.exists():
+        return None
+    # 替换固定宽度为 100% 以自适应容器
+    return path.read_text(encoding="utf-8").replace("width:900px;", "width:100%;")
+
+
+def render_map(file_name: str, fallback_msg: str, height: int | None = None) -> None:
+    """渲染 HTML 地图组件，组件异常时降级为静态文件提示。
+
+    说明：自 Streamlit 1.37 起官方推荐使用 st.iframe 替代已弃用的
+    st.components.v1.html；st.iframe 可自动识别 HTML 字符串 / 本地文件并嵌入。
+    """
+    html = load_map_html(file_name)
+    if html is None:
+        st.warning(fallback_msg)
+        return
+    height = height or settings.default_map_height
+    try:
+        if settings.map_render_mode == "iframe":
+            import tempfile
+
+            tmp = Path(tempfile.gettempdir()) / f"city_map_{_stable_digest(html)}.html"
+            if not tmp.exists():
+                tmp.write_text(html, encoding="utf-8")
+            st.iframe(src=tmp, height=height)  # 本地 HTML 文件由 st.iframe 直接读取嵌入
+        else:
+            st.iframe(html, height=height)  # HTML 字符串模式
+    except Exception as exc:  # noqa: BLE001 - 组件失败不应中断页面
+        logger.warning("地图组件渲染失败（%s），已降级为链接提示。", exc)
+        st.warning(f"{fallback_msg}（组件渲染失败，可直接打开 notebooks/ 下对应文件查看）")
+
+
+def render_quality_report(q: dict, metadata: dict) -> None:
+    """渲染数据质量报告。"""
+    st.markdown("#### 📋 数据质量报告")
+    missing_core = sum(
+        v for k, v in q.get("missing_values", {}).items() if k != "province"
+    )
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("城市总数", q["shape"]["rows"])
+    c2.metric("字段数", q["shape"]["cols"])
+    c3.metric("重复城市", q["duplicate_cities"])
+    c4.metric("核心指标缺失值", missing_core)
+
+    with st.expander("📖 数据字典（字段口径与来源）", expanded=False):
+        if metadata:
+            st.json(metadata)
+        else:
+            st.info("未找到 data/metadata.json。")
+
+    with st.expander("🔬 数据完整性明细", expanded=False):
+        missing_df = pd.DataFrame(
+            [{"字段": k, "缺失值": v} for k, v in q.get("missing_values", {}).items()]
+        )
+        st.dataframe(missing_df, hide_index=True, width="stretch")
+
+        num_summary = q.get("numeric_summary", {})
+        if num_summary:
+            summary_rows = []
+            for col, stats in num_summary.items():
+                row = {"指标": COLUMN_LABELS.get(col, col)}
+                row.update(stats)
+                summary_rows.append(row)
+            st.dataframe(
+                pd.DataFrame(summary_rows),
+                hide_index=True,
+                width="stretch",
+            )
+
+    src_counts = q.get("source_city_counts", {})
+    if src_counts:
+        st.markdown("##### 源文件城市覆盖度")
+        cov_df = pd.DataFrame(
+            [{"数据文件": k, "城市数": v} for k, v in src_counts.items()]
+        )
+        st.dataframe(cov_df, hide_index=True, width="stretch")
+    st.caption(f"数据参考年份：{DATA_REF_YEAR} · 数据版本：v{APP_VERSION}")
+
+
 
 # ---------------- 数据加载（缓存 + 文件签名感知） ----------------
 try:
@@ -116,7 +234,10 @@ mask = pd.Series(True, index=df.index)
 if selected_provinces:
     mask &= df["province"].isin(selected_provinces)
 if city_keyword.strip():
-    mask &= df["city"].str.contains(city_keyword.strip(), case=False, na=False)
+    # regex=False：按字面匹配关键词，避免 "[" / "(" / "*" 等正则特殊字符触发解析异常
+    mask &= df["city"].str.contains(
+        city_keyword.strip(), case=False, na=False, regex=False
+    )
 mask &= df["happiness"].between(*happiness_range)
 mask &= df["income"].between(*income_range)
 mask &= df["house_price"].between(*house_range)
@@ -139,7 +260,9 @@ st.markdown(
 avg_happiness = filtered_df["happiness"].mean()
 avg_income = filtered_df["income"].mean()
 avg_house = filtered_df["house_price"].mean()
+avg_population = filtered_df["population"].mean()
 avg_value = filtered_df["value_index"].mean()
+avg_composite = filtered_df["composite_score"].mean()
 total_pop = filtered_df["population"].sum()
 
 c1, c2, c3, c4, c5 = st.columns(5)
@@ -155,16 +278,6 @@ with c4:
 with c5:
     widgets.metric_card("📈 平均可负担指数", f"{avg_value:.2f}",
                         sub=f"总人口约 {total_pop / 10000:.1f} 亿")
-
-# ===========================================================================
-# 辅助函数：数据导出
-# ===========================================================================
-def to_excel_bytes(data: pd.DataFrame) -> bytes:
-    """将 DataFrame 序列化为 Excel 字节流。"""
-    buffer = BytesIO()
-    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        data.to_excel(writer, index=False, sheet_name="城市数据")
-    return buffer.getvalue()
 
 # ===========================================================================
 # 第一节：核心指标关联分析
@@ -328,12 +441,12 @@ if profile_city:
                 f"{row['composite_score']:.1f}",
             ],
             "筛选范围均值": [
-                f"{filtered_df['happiness'].mean():.1f}",
-                f"¥{filtered_df['income'].mean():,.0f}",
-                f"¥{filtered_df['house_price'].mean():,.0f}",
-                f"{filtered_df['population'].mean():,.0f} 万",
-                f"{filtered_df['value_index'].mean():.2f}",
-                f"{filtered_df['composite_score'].mean():.1f}",
+                f"{avg_happiness:.1f}",
+                f"¥{avg_income:,.0f}",
+                f"¥{avg_house:,.0f}",
+                f"{avg_population:,.0f} 万",
+                f"{avg_value:.2f}",
+                f"{avg_composite:.1f}",
             ],
         })
         st.dataframe(detail, hide_index=True, width="stretch")
@@ -369,14 +482,11 @@ with rank_col:
 
 with table_col:
     st.markdown(f"#### 📋 幸福度排名表（{rank_direction[:6]} {n_cities}）")
-    display_df = top_n_happy.sort_values("happiness", ascending=False)[
-        ["city", "province", "happiness", "income", "house_price", "value_index", "composite_score"]
-    ].copy()
-    display_df.columns = [COLUMN_LABELS[c] for c in display_df.columns]
-    display_df.index = range(1, len(display_df) + 1)
     st.dataframe(
-        widgets.fmt_table(
-            display_df,
+        _styled_table(
+            top_n_happy.sort_values("happiness", ascending=False),
+            ["city", "province", "happiness", "income", "house_price",
+             "value_index", "composite_score"],
             {"年收入": "{:,.0f}", "房价(元/㎡)": "{:,.0f}", "幸福度": "{:.1f}",
              "可负担指数": "{:.2f}", "综合宜居分": "{:.1f}"},
         ),
@@ -422,18 +532,14 @@ with aff_col2:
 widgets.section_title("🏆 住房可负担指数 TOP 20 城市详情")
 
 top20 = analysis.top_n(filtered_df, "value_index", 20)
-top20_display = top20[
-    ["city", "province", "happiness", "income", "house_price", "value_index"]
-].copy()
-top20_display.columns = [COLUMN_LABELS[c] for c in top20_display.columns]
-top20_display.index = range(1, len(top20_display) + 1)
 
 col_a, col_b = st.columns([1.2, 1])
 
 with col_a:
     st.dataframe(
-        widgets.fmt_table(
-            top20_display,
+        _styled_table(
+            top20,
+            ["city", "province", "happiness", "income", "house_price", "value_index"],
             {"年收入": "{:,.0f}", "房价(元/㎡)": "{:,.0f}", "幸福度": "{:.1f}",
              "可负担指数": "{:.2f}"},
             gradient_col="可负担指数",
@@ -483,16 +589,12 @@ with out_col1:
 
 with out_col2:
     if not outlier_df.empty:
-        out_display = outlier_df[
-            ["city", "province", "happiness", "income", "house_price",
-             "value_index", "composite_score"]
-        ].copy()
-        out_display.columns = [COLUMN_LABELS[c] for c in out_display.columns]
-        out_display.index = range(1, len(out_display) + 1)
-        st.markdown(f"#### 📋 异常值城市明细（{len(out_display)} 个）")
+        st.markdown(f"#### 📋 异常值城市明细（{len(outlier_df)} 个）")
         st.dataframe(
-            widgets.fmt_table(
-                out_display,
+            _styled_table(
+                outlier_df,
+                ["city", "province", "happiness", "income", "house_price",
+                 "value_index", "composite_score"],
                 {"年收入": "{:,.0f}", "房价(元/㎡)": "{:,.0f}", "幸福度": "{:.1f}",
                  "可负担指数": "{:.2f}", "综合宜居分": "{:.1f}"},
                 gradient_col="可负担指数",
@@ -578,38 +680,6 @@ with prov_table2:
 # ===========================================================================
 # 第八节：地理可视化地图（pyecharts 生成的静态 HTML）
 # ===========================================================================
-@st.cache_data(show_spinner=False)
-def load_map_html(file_name: str) -> str | None:
-    """读取并预处理 HTML 地图内容（缓存字符串，文件变化时自动失效）。"""
-    path = NOTEBOOKS_DIR / file_name
-    if not path.exists():
-        return None
-    # 替换固定宽度为 100% 以自适应容器
-    return path.read_text(encoding="utf-8").replace("width:900px;", "width:100%;")
-
-
-def render_map(file_name: str, fallback_msg: str, height: int | None = None) -> None:
-    """渲染 HTML 地图组件，组件异常时降级为静态文件提示。"""
-    html = load_map_html(file_name)
-    if html is None:
-        st.warning(fallback_msg)
-        return
-    height = height or settings.default_map_height
-    try:
-        if settings.map_render_mode == "iframe":
-            import tempfile
-
-            tmp = Path(tempfile.gettempdir()) / f"city_map_{abs(hash(html))}.html"
-            if not tmp.exists():
-                tmp.write_text(html, encoding="utf-8")
-            st.iframe(src=tmp.as_uri(), height=height)
-        else:
-            st.components.v1.html(html, height=height)
-    except Exception as exc:  # noqa: BLE001 - 组件失败不应中断页面
-        logger.warning("地图组件渲染失败（%s），已降级为链接提示。", exc)
-        st.warning(f"{fallback_msg}（组件渲染失败，可直接打开 notebooks/ 下对应文件查看）")
-
-
 if show_maps:
     widgets.section_title("🗺️ 中国城市地理分布地图")
     map_col1, map_col2 = st.columns(2)
@@ -626,53 +696,6 @@ if show_maps:
 widgets.section_title("📋 完整数据浏览")
 
 metadata = data_loader.load_metadata(DATA_DIR)
-
-
-def render_quality_report(q: dict) -> None:
-    """渲染数据质量报告。"""
-    st.markdown("#### 📋 数据质量报告")
-    missing_core = sum(
-        v for k, v in q.get("missing_values", {}).items() if k != "province"
-    )
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("城市总数", q["shape"]["rows"])
-    c2.metric("字段数", q["shape"]["cols"])
-    c3.metric("重复城市", q["duplicate_cities"])
-    c4.metric("核心指标缺失值", missing_core)
-
-    with st.expander("📖 数据字典（字段口径与来源）", expanded=False):
-        if metadata:
-            st.json(metadata)
-        else:
-            st.info("未找到 data/metadata.json。")
-
-    with st.expander("🔬 数据完整性明细", expanded=False):
-        missing_df = pd.DataFrame(
-            [{"字段": k, "缺失值": v} for k, v in q.get("missing_values", {}).items()]
-        )
-        st.dataframe(missing_df, hide_index=True, width="stretch")
-
-        num_summary = q.get("numeric_summary", {})
-        if num_summary:
-            summary_rows = []
-            for col, stats in num_summary.items():
-                row = {"指标": COLUMN_LABELS.get(col, col)}
-                row.update(stats)
-                summary_rows.append(row)
-            st.dataframe(
-                pd.DataFrame(summary_rows),
-                hide_index=True,
-                width="stretch",
-            )
-
-    src_counts = q.get("source_city_counts", {})
-    if src_counts:
-        st.markdown("##### 源文件城市覆盖度")
-        cov_df = pd.DataFrame(
-            [{"数据文件": k, "城市数": v} for k, v in src_counts.items()]
-        )
-        st.dataframe(cov_df, hide_index=True, width="stretch")
-    st.caption(f"数据参考年份：{DATA_REF_YEAR} · 数据版本：v{APP_VERSION}")
 
 
 tab1, tab2, tab3 = st.tabs(["🏙️ 城市明细数据", "🗺️ 省份聚合数据", "✅ 数据质量报告"])
@@ -737,7 +760,7 @@ with tab2:
     )
 
 with tab3:
-    render_quality_report(quality)
+    render_quality_report(quality, metadata)
 
 # ---------------- 页脚 ----------------
 widgets.render_footer()

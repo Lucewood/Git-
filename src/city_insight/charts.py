@@ -99,6 +99,12 @@ def correlation_heatmap(
 ) -> plt.Figure:
     """指标相关性矩阵热力图（轴标签自动映射为中文）。"""
     sub = df[list(cols)].dropna()
+    if len(sub) < 2:
+        fig, ax = plt.subplots(figsize=figsize)
+        ax.text(0.5, 0.5, "数据量不足，无法绘制相关性热力图",
+                ha="center", va="center", fontsize=12)
+        ax.axis("off")
+        return _finalize(fig)
     corr = sub.corr()
     fig, ax = plt.subplots(figsize=figsize)
     sns.heatmap(
@@ -133,6 +139,11 @@ def barh_ranking(
         label_col: 条形标签列名（默认 "city"）。
     """
     n = len(data)
+    if n == 0:
+        fig, ax = plt.subplots(figsize=(8, 4))
+        ax.text(0.5, 0.5, "无数据可展示", ha="center", va="center", fontsize=12)
+        ax.axis("off")
+        return _finalize(fig)
     if figsize is None:
         figsize = (8, max(4, n * 0.25 + 2))
     fig, ax = plt.subplots(figsize=figsize)
@@ -190,7 +201,7 @@ def distribution_hist(
     """数值分布直方图（可选核密度曲线）。"""
     s = pd.to_numeric(series, errors="coerce").dropna()
     fig, ax = plt.subplots(figsize=figsize)
-    if kde and len(s) > 1:
+    if kde and len(s) > 1 and s.nunique() > 1:
         sns.histplot(s, kde=True, color=color, alpha=0.7, ax=ax)
     else:
         ax.hist(s, bins="auto", color=color, alpha=0.7, edgecolor="white")

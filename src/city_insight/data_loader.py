@@ -43,7 +43,11 @@ def data_signature(data_dir: Path = DATA_DIR) -> tuple[tuple[str, int, int], ...
     files = sorted(
         (data_dir / name for name in REQUIRED_FILES if (data_dir / name).exists())
     )
-    return tuple((f.name, f.stat().st_mtime_ns, f.stat().st_size) for f in files)
+    signature: list[tuple[str, int, int]] = []
+    for file in files:
+        stat = file.stat()  # 仅调用一次 stat，避免重复系统调用
+        signature.append((file.name, stat.st_mtime_ns, stat.st_size))
+    return tuple(signature)
 
 
 def _read_csv(path: Path) -> pd.DataFrame:
@@ -118,7 +122,6 @@ def _fmt_float(value: float | None, ndigits: int = 2) -> float | None:
 
 def validate_data(
     df: pd.DataFrame,
-    raw: pd.DataFrame | None = None,
     source_counts: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     """生成数据质量报告（缺失值、重复、数值范围、源覆盖度等）。"""
@@ -164,7 +167,7 @@ def load_and_merge(data_dir: Path = DATA_DIR) -> tuple[pd.DataFrame, dict[str, A
     # 核心指标任一缺失即剔除，保证后续分析质量
     df = df.dropna(subset=[*NUMERIC_COLS, "value_index"]).reset_index(drop=True)
 
-    quality = validate_data(df, raw, source_counts)
+    quality = validate_data(df, source_counts)
     logger.info(
         "数据加载完成：%d 个城市，源文件城市数=%s，参考年份=%d",
         len(df), source_counts, DATA_REF_YEAR,

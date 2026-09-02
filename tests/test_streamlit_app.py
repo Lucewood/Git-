@@ -57,3 +57,13 @@ def test_ranking_direction_switch():
     at.run()
     at.radio[0].set_value("Bottom N（最低）").run()
     assert not at.exception
+
+
+def test_keyword_regex_special_char_no_crash():
+    """含正则特殊字符的关键词应按字面匹配，不得触发正则解析异常。"""
+    at = _build_app()
+    at.run()
+    at.text_input[0].set_value("[").run()
+    assert not at.exception, f"正则特殊字符关键词抛出了异常: {at.exception}"
+    # 特殊字符没有匹配到任何城市，应显示空筛选警告而非崩溃
+    assert len(at.warning) > 0
