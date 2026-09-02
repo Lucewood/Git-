@@ -112,7 +112,9 @@ def correlation_heatmap(
         annot_kws={"size": 9}, ax=ax, cbar_kws={"shrink": 0.8},
     )
     labels = [COLUMN_LABELS.get(c, c) for c in cols]
-    ax.set_xticklabels(labels, rotation=30, ha="right")
+    # 横轴标签旋转 45°：比 30° 的水平投影更窄，可避免相邻中文标签（如
+    # “房价(元/㎡)”与“常住人口(万)”）在宽列名场景下文字重叠
+    ax.set_xticklabels(labels, rotation=45, ha="right")
     ax.set_yticklabels(labels, rotation=0)
     ax.set_title("指标相关性热力图", fontsize=13, fontweight="bold")
     return _finalize(fig)
@@ -255,7 +257,10 @@ def city_comparison(
         axes[i // cols][i % cols].axis("off")
 
     fig.suptitle("多城市多指标对比", fontsize=14, fontweight="bold")
-    return _finalize(fig, tight=False)
+    # 必须执行 tight_layout 并为 suptitle 预留顶部空间（rect），否则
+    # 下方子图的标题会与上方子图的坐标轴标签 / 刻度标签发生文字重叠
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    return fig
 
 
 def city_profile_chart(
