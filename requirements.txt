@@ -1,0 +1,7 @@
+# 运行时依赖（生产环境）
+streamlit==1.58.0
+pandas==3.0.3
+numpy==2.5.0
+matplotlib==3.11.0
+seaborn==0.13.2
+openpyxl==3.1.5

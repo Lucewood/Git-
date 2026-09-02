@@ -1,0 +1,16 @@
+# Streamlit 服务配置
+[server]
+headless = true
+port = 8501
+maxUploadSize = 50
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+base = "light"
+primaryColor = "#667eea"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f8f9ff"
+textColor = "#1a1a2e"
+font = "sans serif"

@@ -1,219 +1,83 @@
 """
-中国城市生活成本与幸福感分析可视化 - Streamlit 交互式网页应用
+中国城市生活成本与幸福感分析可视化 —— Streamlit 交互式网页应用
 
-【1.01优化说明】
-1. 数据加载 / 文件签名 / HTML 地图读取均使用 @st.cache_data 缓存，避免每次交互重复 I/O；
-   数据文件内容变化时（mtime+size 签名）缓存自动失效。
-2. 对空筛选结果、零方差相关系数、数据不足等边界情况进行防护，避免 NaN / 异常导致页面崩溃。
-3. 使用 Agg 无界面后端提升运行稳定性；降低 seaborn 回归重采样开销，加快图表渲染。
-4. 清理未使用的导入与变量；使用新版 Streamlit 的 width 参数，规避弃用告警。
+v2.0 工业级重构说明
+1. 模块化架构：业务逻辑拆分至 src/city_insight 包
+   （config / logging_setup / data_loader / analysis / charts / widgets / styles），
+   本入口脚本仅负责页面编排，便于维护与单元测试。
+2. 数据管道化：data_loader 提供纯函数加载 + Streamlit 缓存包装，数据签名感知文件变化；
+   新增常住人口数据与派生指标（住房可负担指数、综合宜居评分）。
+3. 数据质量治理：加载时自动校验，页面提供可视化质量报告；数据口径见 data/metadata.json。
+4. 健壮性：所有图表 / 统计对空数据、零方差、数据不足等边界情况做了防护。
+5. 可部署性：提供 requirements*.txt、Dockerfile、.streamlit/config.toml、
+   GitHub Actions CI 与 pytest 单元测试（tests/）。
 """
+from __future__ import annotations
+
+import sys
+from io import BytesIO
+from pathlib import Path
+
+# 确保可将 src/ 下的 city_insight 包导入（兼容 streamlit 运行方式）
+_SRC = Path(__file__).resolve().parent
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+
 import matplotlib
 
 matplotlib.use("Agg")  # 必须在导入 pyplot 之前设置，规避 GUI 后端
 
-import streamlit as st
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
 import logging
-from pathlib import Path
 
-# 抑制 matplotlib 字体族告警（如 SimHei 缺少 bold 字重时的提示）
-logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR)
+import matplotlib.pyplot as plt
+import pandas as pd
+import streamlit as st
 
-# ---------------- 路径与全局常量 ----------------
-BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = BASE_DIR / "data"
-NOTEBOOKS_DIR = BASE_DIR / "notebooks"
+from city_insight.config import (
+    APP_NAME,
+    APP_VERSION,
+    DATA_DIR,
+    NOTEBOOKS_DIR,
+    DATA_REF_YEAR,
+    METRIC_COLS,
+    COLUMN_LABELS,
+    COLOR_MAPS,
+    METRIC_UNITS,
+    get_settings,
+)
+from city_insight.logging_setup import setup_logging
+from city_insight.styles import CUSTOM_CSS
+from city_insight import analysis, charts, data_loader, widgets
 
-FONT_SANS = ["SimHei", "Microsoft YaHei", "DejaVu Sans"]
-NUMERIC_COLS = ("happiness", "income", "house_price")
-
-COLOR_MAPS = {
-    "默认蓝": "steelblue",
-    "暖橙": "#ff7f50",
-    "森林绿": "#2e8b57",
-    "深紫": "#8b5cf6",
-}
-
-CUSTOM_CSS = """
-<style>
-    .main-header {
-        font-size: 2.8rem;
-        font-weight: 700;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        text-align: center;
-        padding: 1rem 0;
-        margin-bottom: 1.5rem;
-    }
-    .metric-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        border-radius: 16px;
-        padding: 1.5rem;
-        color: white;
-        text-align: center;
-        box-shadow: 0 8px 32px rgba(102, 126, 234, 0.25);
-    }
-    .metric-card h3 {
-        font-size: 1rem;
-        opacity: 0.9;
-        margin-bottom: 0.5rem;
-    }
-    .metric-card h1 {
-        font-size: 2.2rem;
-        font-weight: 700;
-    }
-    .section-title {
-        font-size: 1.6rem;
-        font-weight: 600;
-        color: #1a1a2e;
-        border-left: 5px solid #667eea;
-        padding-left: 1rem;
-        margin: 2rem 0 1rem 0;
-    }
-    .insight-box {
-        background: #f8f9ff;
-        border-radius: 12px;
-        padding: 1.2rem;
-        border: 1px solid #e0e5ff;
-        margin: 1rem 0;
-    }
-    .footer {
-        text-align: center;
-        padding: 2rem;
-        color: #999;
-        font-size: 0.85rem;
-    }
-</style>
-"""
+settings = get_settings()
+setup_logging(settings.log_level)
+logger = logging.getLogger(__name__)
 
 # ---------------- 页面配置（须为第一个 st 调用） ----------------
 st.set_page_config(
-    page_title="中国城市生活成本与幸福感分析",
+    page_title=f"{APP_NAME} v{APP_VERSION}",
     page_icon="🏙️",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+charts.setup_plot_style()
 
-# ---------------- 中文字体设置 ----------------
-matplotlib.rcParams["font.sans-serif"] = FONT_SANS
-matplotlib.rcParams["axes.unicode_minus"] = False
-
-# ---------------- 通用辅助函数 ----------------
-def metric_card(title: str, value: str) -> None:
-    """渲染顶部指标卡片。"""
-    st.markdown(
-        f'<div class="metric-card"><h3>{title}</h3><h1>{value}</h1></div>',
-        unsafe_allow_html=True,
+# ---------------- 数据加载（缓存 + 文件签名感知） ----------------
+try:
+    df, quality = data_loader.load_data(
+        DATA_DIR, data_loader.data_signature(DATA_DIR)
     )
+except FileNotFoundError as exc:
+    st.error(f"❌ 数据文件缺失：{exc}")
+    st.info("请确保 data/ 目录包含全部数据文件（清单见 data/metadata.json）。")
+    st.stop()
 
-
-def safe_corr(a: pd.Series, b: pd.Series) -> float:
-    """安全计算相关系数；样本不足或零方差时返回 NaN，避免运行时告警。"""
-    if len(a) < 2 or a.std() == 0 or b.std() == 0:
-        return float("nan")
-    return float(a.corr(b))
-
-
-def corr_summary(corr, strong_threshold, strong_msg, weak_msg):
-    """生成相关性洞察文本；数据不足时给出友好提示。"""
-    if not np.isfinite(corr):
-        return "数据量不足，无法计算有效相关性。"
-    desc = strong_msg if abs(corr) > strong_threshold else weak_msg
-    return f"相关系数为 {corr:.3f}，{desc}。"
-
-
-def add_bar_labels(ax, bars, values, fmt="{:.1f}", offset=0.05, fontsize=9):
-    """在水平条形图右侧标注数值。"""
-    for bar, val in zip(bars, values):
-        ax.text(
-            bar.get_width() + offset,
-            bar.get_y() + bar.get_height() / 2,
-            fmt.format(val),
-            va="center",
-            fontsize=fontsize,
-        )
-
-
-def range_slider(label, series, step, key=None, to_int=False):
-    """创建数值范围滑块；自动处理 min==max / 非有限值等异常情况。"""
-    lo, hi = float(series.min()), float(series.max())
-    if not (np.isfinite(lo) and np.isfinite(hi)):
-        lo, hi = 0.0, 1.0
-    if to_int:
-        lo, hi = int(np.floor(lo)), int(np.ceil(hi))
-    if lo >= hi:
-        hi = lo + step
-    return st.slider(label, lo, hi, (lo, hi), step=step, key=key)
-
-
-def top_n_slider(key: str, n_rows: int) -> int:
-    """“显示城市数量”滑块；数据不足时自动收缩范围，避免 min>=max 报错。"""
-    limit = min(50, n_rows)
-    if limit <= 1:
-        return max(1, limit)
-    lo = min(10, limit)
-    val = min(20, limit)
-    if lo >= limit:
-        return limit
-    return st.slider("显示城市数量", lo, limit, val, key=key)
-
-
-def fmt_table(df, fmt_dict, gradient_col=None, cmap=None):
-    """统一格式化表格，可选添加渐变底色。"""
-    style = df.style.format(fmt_dict)
-    if gradient_col is not None and cmap is not None:
-        style = style.background_gradient(subset=[gradient_col], cmap=cmap)
-    return style
-
-
-# ---------------- 数据加载（带缓存，签名感知文件变化） ----------------
-def _data_signature():
-    """生成数据文件签名（文件名 + mtime + 大小），文件变化时缓存自动失效。"""
-    files = sorted(DATA_DIR.glob("*.csv"))
-    return tuple((f.name, f.stat().st_mtime_ns, f.stat().st_size) for f in files)
-
-
-@st.cache_data(show_spinner=False)
-def load_data(signature):
-    """加载并合并所有数据源。signature 仅用于缓存键。"""
-    happiness = pd.read_csv(DATA_DIR / "happiness.csv")
-    income = pd.read_csv(DATA_DIR / "income.csv")
-    house = pd.read_csv(DATA_DIR / "house_price.csv")
-    province = pd.read_csv(DATA_DIR / "province.csv")
-    location = pd.read_csv(DATA_DIR / "location.csv")
-
-    df = (
-        province.merge(happiness, on="city", how="left")
-        .merge(income, on="city", how="left")
-        .merge(house, on="city", how="left")
-        .merge(location, on="city", how="left")
-        .drop_duplicates(subset="city", keep="first")
-    )
-
-    # 数值列强制转换，异常值置为 NaN
-    for col in NUMERIC_COLS:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    # 安全计算住房可负担指数：房价缺失或 <=0 时记为 NaN（随后剔除）
-    df["value_index"] = np.where(
-        df["house_price"].gt(0), df["income"] / df["house_price"], np.nan
-    )
-    return df.dropna(subset=[*NUMERIC_COLS, "value_index"]).reset_index(drop=True)
-
-
-df = load_data(_data_signature())
-
-# ---------------- 侧边栏 ----------------
+# ---------------- 侧边栏：分析控制面板 ----------------
 with st.sidebar:
-    st.image("https://img.icons8.com/color/96/city-buildings.png", width=72)
-    st.markdown("## 🔍 分析控制面板")
+    st.markdown("## 🏙️ 分析控制面板")
+    st.caption(f"数据参考年份 {DATA_REF_YEAR} · 版本 v{APP_VERSION}")
 
     selected_provinces = st.multiselect(
         "选择省份（可多选，留空=全部）",
@@ -221,35 +85,54 @@ with st.sidebar:
         default=[],
     )
 
+    city_keyword = st.text_input("🔎 城市关键词过滤（可留空）", value="")
+
     st.markdown("---")
     st.markdown("### 📊 数值筛选")
-    happiness_range = range_slider("幸福度范围", df["happiness"], 0.5)
-    income_range = range_slider("年收入范围（元）", df["income"], 1000, to_int=True)
-    house_range = range_slider("房价范围（元/㎡）", df["house_price"], 500, to_int=True)
+    happiness_range = widgets.range_slider(
+        "幸福度范围", df["happiness"], 0.5, key="r_happy"
+    )
+    income_range = widgets.range_slider(
+        "年收入范围（元）", df["income"], 1000, key="r_income", to_int=True
+    )
+    house_range = widgets.range_slider(
+        "房价范围（元/㎡）", df["house_price"], 500, key="r_house", to_int=True
+    )
+    population_range = widgets.range_slider(
+        "常住人口范围（万人）", df["population"], 10, key="r_pop", to_int=True
+    )
 
     st.markdown("---")
     st.markdown("### 🎨 可视化设置")
-    chart_theme = st.selectbox("图表配色主题", options=list(COLOR_MAPS.keys()))
+    chart_theme = st.selectbox(
+        "图表配色主题", options=list(COLOR_MAPS.keys()), key="theme"
+    )
     main_color = COLOR_MAPS[chart_theme]
+
+    show_maps = st.toggle("显示地理地图（HTML 组件）", value=True, key="toggle_maps")
 
 # ---------------- 数据筛选 ----------------
 mask = pd.Series(True, index=df.index)
 if selected_provinces:
     mask &= df["province"].isin(selected_provinces)
+if city_keyword.strip():
+    mask &= df["city"].str.contains(city_keyword.strip(), case=False, na=False)
 mask &= df["happiness"].between(*happiness_range)
 mask &= df["income"].between(*income_range)
 mask &= df["house_price"].between(*house_range)
-filtered_df = df.loc[mask]
+mask &= df["population"].between(*population_range)
+filtered_df = df.loc[mask].copy()
 
 if filtered_df.empty:
-    st.warning("⚠️ 当前筛选条件下没有任何符合条件的城市，请调整左侧筛选条件。")
+    st.warning("当前筛选条件下没有任何符合条件的城市，请调整左侧筛选条件。")
     st.stop()
 
 # ---------------- 页面主体：标题与指标卡片 ----------------
-st.markdown('<h1 class="main-header">🏙️ 中国城市生活成本与幸福感分析</h1>', unsafe_allow_html=True)
+st.markdown(f'<h1 class="main-header">🏙️ {APP_NAME}</h1>', unsafe_allow_html=True)
 st.markdown(
-    '<p style="text-align:center; color:#666; font-size:1.1rem; margin-bottom:1rem;">'
-    "基于全国300+城市的收入、房价与幸福度数据，深度探索城市宜居价值</p>",
+    f'<p style="text-align:center; color:#666; font-size:1.05rem; margin-bottom:1rem;">'
+    f"基于全国 {len(df)} 个城市（当前筛选 {len(filtered_df)} 个）的收入、房价、人口与幸福度数据，"
+    "深度探索城市宜居价值</p>",
     unsafe_allow_html=True,
 )
 
@@ -257,286 +140,446 @@ avg_happiness = filtered_df["happiness"].mean()
 avg_income = filtered_df["income"].mean()
 avg_house = filtered_df["house_price"].mean()
 avg_value = filtered_df["value_index"].mean()
+total_pop = filtered_df["population"].sum()
 
 c1, c2, c3, c4, c5 = st.columns(5)
 with c1:
-    metric_card("📋 城市总数", f"{len(filtered_df)}")
+    widgets.metric_card("📋 城市总数", f"{len(filtered_df)}",
+                        sub=f"{filtered_df['province'].nunique()} 个省份")
 with c2:
-    metric_card("😊 平均幸福度", f"{avg_happiness:.1f}")
+    widgets.metric_card("😊 平均幸福度", f"{avg_happiness:.1f}", sub="满分 100")
 with c3:
-    metric_card("💰 平均年收入", f"¥{avg_income / 10000:.1f}万")
+    widgets.metric_card("💰 平均年收入", f"¥{avg_income / 10000:.1f}万", sub="单位：元/年")
 with c4:
-    metric_card("🏠 平均房价", f"¥{avg_house:.0f}")
+    widgets.metric_card("🏠 平均房价", f"¥{avg_house:.0f}", sub="单位：元/㎡")
 with c5:
-    metric_card("📈 平均可负担指数", f"{avg_value:.2f}")
+    widgets.metric_card("📈 平均可负担指数", f"{avg_value:.2f}",
+                        sub=f"总人口约 {total_pop / 10000:.1f} 亿")
 
+# ===========================================================================
+# 辅助函数：数据导出
+# ===========================================================================
+def to_excel_bytes(data: pd.DataFrame) -> bytes:
+    """将 DataFrame 序列化为 Excel 字节流。"""
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        data.to_excel(writer, index=False, sheet_name="城市数据")
+    return buffer.getvalue()
 
-# ---------------- 第一行：核心指标关联分析 ----------------
-st.markdown('<h2 class="section-title">📈 核心指标关联分析</h2>', unsafe_allow_html=True)
+# ===========================================================================
+# 第一节：核心指标关联分析
+# ===========================================================================
+widgets.section_title("📈 核心指标关联分析")
 
 col_left, col_right = st.columns(2)
 
 with col_left:
     st.markdown("### 收入 vs 幸福度")
-    fig, ax = plt.subplots(figsize=(6, 4.5))
-    sns.scatterplot(
-        data=filtered_df, x="income", y="happiness",
-        alpha=0.6, s=60, color=main_color, edgecolors="white", linewidth=0.5, ax=ax,
+    fig = charts.scatter_with_regression(
+        filtered_df, "income", "happiness",
+        color=main_color,
+        xlabel=METRIC_UNITS["income"],
+        ylabel=METRIC_UNITS["happiness"],
+        title="收入与幸福度的关系",
+        n_boot=settings.n_boot_regression,
     )
-    # n_boot 降低重采样开销，显著加快回归线绘制；样本过少时跳过回归线
-    if len(filtered_df) >= 2:
-        sns.regplot(
-            data=filtered_df, x="income", y="happiness",
-            scatter=False, color="red", n_boot=100,
-            line_kws={"linewidth": 2, "linestyle": "--"}, ax=ax,
-        )
-    ax.set_xlabel("年收入（元）", fontsize=11)
-    ax.set_ylabel("幸福度指数", fontsize=11)
-    ax.set_title("收入与幸福度的关系", fontsize=13, fontweight="bold")
-    ax.grid(True, alpha=0.3, linestyle="--")
-    fig.tight_layout()
     st.pyplot(fig)
     plt.close(fig)
 
-    corr_income = safe_corr(filtered_df["income"], filtered_df["happiness"])
-    summary = corr_summary(
+    corr_income = analysis.safe_corr(filtered_df["income"], filtered_df["happiness"])
+    summary = analysis.corr_summary_text(
         corr_income, 0.3,
         "表明收入与幸福度存在较强的正相关关系",
         "表明收入与幸福度的相关性较弱",
     )
-    st.markdown(
-        f'<div class="insight-box"><strong>📊 相关性洞察：</strong> {summary}</div>',
-        unsafe_allow_html=True,
-    )
+    widgets.insight_box(f"<strong>📊 相关性洞察：</strong> {summary}")
 
 with col_right:
     st.markdown("### 房价 vs 幸福度")
-    fig, ax = plt.subplots(figsize=(6, 4.5))
-    sns.scatterplot(
-        data=filtered_df, x="house_price", y="happiness",
-        alpha=0.6, s=60, color="#ff6b6b", edgecolors="white", linewidth=0.5, ax=ax,
+    fig = charts.scatter_with_regression(
+        filtered_df, "house_price", "happiness",
+        color="#ff6b6b",
+        xlabel=METRIC_UNITS["house_price"],
+        ylabel=METRIC_UNITS["happiness"],
+        title="房价与幸福度的关系",
+        n_boot=settings.n_boot_regression,
     )
-    if len(filtered_df) >= 2:
-        sns.regplot(
-            data=filtered_df, x="house_price", y="happiness",
-            scatter=False, color="red", n_boot=100,
-            line_kws={"linewidth": 2, "linestyle": "--"}, ax=ax,
-        )
-    ax.set_xlabel("房价（元/㎡）", fontsize=11)
-    ax.set_ylabel("幸福度指数", fontsize=11)
-    ax.set_title("房价与幸福度的关系", fontsize=13, fontweight="bold")
-    ax.grid(True, alpha=0.3, linestyle="--")
-    fig.tight_layout()
     st.pyplot(fig)
     plt.close(fig)
 
-    corr_house = safe_corr(filtered_df["house_price"], filtered_df["happiness"])
-    summary = corr_summary(
+    corr_house = analysis.safe_corr(filtered_df["house_price"], filtered_df["happiness"])
+    summary = analysis.corr_summary_text(
         corr_house, 0.5,
         "高房价确实带来了更高的幸福感",
         "高房价并不意味着更高的幸福感",
     )
-    st.markdown(
-        f'<div class="insight-box"><strong>📊 相关性洞察：</strong> {summary}</div>',
-        unsafe_allow_html=True,
+    widgets.insight_box(f"<strong>📊 相关性洞察：</strong> {summary}")
+
+# 相关性热力图 + 指标分布
+col_hm, col_dist = st.columns([1.15, 1])
+with col_hm:
+    st.markdown("### 指标相关性矩阵")
+    if len(filtered_df) >= 3:
+        fig = charts.correlation_heatmap(filtered_df, METRIC_COLS)
+        st.pyplot(fig)
+        plt.close(fig)
+    else:
+        st.info("筛选后的样本量不足，无法绘制相关性热力图。")
+
+with col_dist:
+    st.markdown("### 指标分布概览")
+    dist_metric = st.selectbox(
+        "选择指标查看分布", options=list(METRIC_COLS), key="dist_metric",
+        format_func=lambda m: COLUMN_LABELS.get(m, m),
+    )
+    if len(filtered_df) >= 2:
+        fig = charts.distribution_hist(
+            filtered_df[dist_metric],
+            color=main_color,
+            title=f"{COLUMN_LABELS.get(dist_metric, dist_metric)} 分布",
+            xlabel=METRIC_UNITS.get(dist_metric, dist_metric),
+        )
+        st.pyplot(fig)
+        plt.close(fig)
+    else:
+        st.info("筛选后的样本量不足，无法绘制分布图。")
+
+# ===========================================================================
+# 第二节：城市对比与画像
+# ===========================================================================
+widgets.section_title("🔬 城市对比与画像")
+
+province_map = df.set_index("city")["province"].to_dict()
+
+cmp_col, profile_col = st.columns([1.3, 1])
+
+with cmp_col:
+    st.markdown("### 🆚 多城市指标对比")
+    max_cities = settings.max_comparison_cities
+    default_cities = [c for c in ("北京", "上海", "成都", "长沙") if c in set(filtered_df["city"])]
+    selected_cities = st.multiselect(
+        f"选择 2-{max_cities} 个城市进行对比",
+        options=filtered_df["city"].tolist(),
+        default=default_cities,
+        key="cmp_cities",
+        format_func=lambda c: f"{c}（{province_map.get(c, '-')}）",
     )
 
-# ---------------- 第二行：幸福度排名 ----------------
-st.markdown('<h2 class="section-title">😊 城市幸福度排名</h2>', unsafe_allow_html=True)
-
-col_chart, col_table = st.columns([1.5, 1])
-
-with col_chart:
-    n_cities = top_n_slider("happiness_n", len(filtered_df))
-    top_n_happy = filtered_df.nlargest(n_cities, "happiness").sort_values(
-        "happiness", ascending=True
+with profile_col:
+    st.markdown("### 🧭 城市画像")
+    profile_city = st.selectbox(
+        "选择城市查看指标画像",
+        options=filtered_df["city"].tolist(),
+        key="profile_city",
+        format_func=lambda c: f"{c}（{province_map.get(c, '-')}）",
     )
 
-    fig, ax = plt.subplots(figsize=(8, max(6, n_cities * 0.25)))
-    bars = ax.barh(
-        top_n_happy["city"], top_n_happy["happiness"],
-        color=main_color, edgecolor="white",
+if len(selected_cities) >= 2:
+    fig = charts.city_comparison(
+        filtered_df, selected_cities, METRIC_COLS, color=main_color
     )
-    ax.set_xlabel("幸福度指数", fontsize=11)
-    ax.set_title(f"幸福度 Top {n_cities} 城市", fontsize=13, fontweight="bold")
-    ax.grid(axis="x", alpha=0.3, linestyle="--")
-    add_bar_labels(ax, bars, top_n_happy["happiness"], fmt="{:.1f}", offset=0.3)
-    fig.tight_layout()
+    st.pyplot(fig)
+    plt.close(fig)
+elif selected_cities:
+    st.info("请至少选择 2 个城市以进行对比。")
+
+if profile_city:
+    row = filtered_df[filtered_df["city"] == profile_city].iloc[0]
+    pct = pd.Series({
+        m: float(analysis.percentile_rank(filtered_df[m]).loc[row.name]) * 100
+        for m in METRIC_COLS
+    })
+
+    m1, m2, m3, m4, m5, m6 = st.columns(6)
+    with m1:
+        widgets.metric_card("😊 幸福度", f"{row['happiness']:.1f}",
+                            sub=f"领先 {pct['happiness']:.0f}% 城市")
+    with m2:
+        widgets.metric_card("💰 年收入", f"{row['income'] / 10000:.1f}万",
+                            sub=f"领先 {pct['income']:.0f}% 城市")
+    with m3:
+        widgets.metric_card("🏠 房价", f"{row['house_price']:.0f}",
+                            sub=f"领先 {pct['house_price']:.0f}% 城市")
+    with m4:
+        widgets.metric_card("👥 人口", f"{row['population']:.0f}万",
+                            sub=f"领先 {pct['population']:.0f}% 城市")
+    with m5:
+        widgets.metric_card("📈 可负担指数", f"{row['value_index']:.2f}",
+                            sub=f"领先 {pct['value_index']:.0f}% 城市")
+    with m6:
+        widgets.metric_card("🌟 综合宜居分", f"{row['composite_score']:.1f}",
+                            sub=f"领先 {pct['composite_score']:.0f}% 城市")
+
+    col_profile, col_detail = st.columns([1, 1.2])
+    with col_profile:
+        fig = charts.city_profile_chart(pct, color=main_color)
+        st.pyplot(fig)
+        plt.close(fig)
+    with col_detail:
+        st.markdown(f"#### 📋 {profile_city} 数据一览（筛选范围：{len(filtered_df)} 个城市）")
+        detail = pd.DataFrame({
+            "指标": ["幸福度", "年收入", "房价", "常住人口", "可负担指数", "综合宜居分"],
+            "本城市": [
+                f"{row['happiness']:.1f}",
+                f"¥{row['income']:,.0f}",
+                f"¥{row['house_price']:,.0f}",
+                f"{row['population']:,.0f} 万",
+                f"{row['value_index']:.2f}",
+                f"{row['composite_score']:.1f}",
+            ],
+            "筛选范围均值": [
+                f"{filtered_df['happiness'].mean():.1f}",
+                f"¥{filtered_df['income'].mean():,.0f}",
+                f"¥{filtered_df['house_price'].mean():,.0f}",
+                f"{filtered_df['population'].mean():,.0f} 万",
+                f"{filtered_df['value_index'].mean():.2f}",
+                f"{filtered_df['composite_score'].mean():.1f}",
+            ],
+        })
+        st.dataframe(detail, hide_index=True, width="stretch")
+
+# ===========================================================================
+# 第三节：城市幸福度排名
+# ===========================================================================
+widgets.section_title("😊 城市幸福度排名")
+
+rank_col, table_col = st.columns([1.5, 1])
+
+with rank_col:
+    rank_direction = st.radio(
+        "查看方向", ["Top N（最高）", "Bottom N（最低）"],
+        horizontal=True, key="happy_dir",
+    )
+    n_cities = widgets.top_n_slider("happiness_n", len(filtered_df))
+    if rank_direction.startswith("Top"):
+        top_n_happy = analysis.top_n(filtered_df, "happiness", n_cities)
+    else:
+        top_n_happy = analysis.top_n(filtered_df, "happiness", n_cities, ascending=True)
+    chart_data = top_n_happy.sort_values("happiness", ascending=True)
+
+    fig = charts.barh_ranking(
+        chart_data, "happiness",
+        color=main_color,
+        title=f"幸福度 {'Top' if rank_direction.startswith('Top') else 'Bottom'} {n_cities} 城市",
+        xlabel=METRIC_UNITS["happiness"],
+        fmt="{:.1f}",
+    )
     st.pyplot(fig)
     plt.close(fig)
 
-with col_table:
-    st.markdown("#### 📋 幸福度排名表")
-    display_df = (
-        top_n_happy.sort_values("happiness", ascending=False)[
-            ["city", "province", "happiness", "income", "house_price", "value_index"]
-        ].copy()
-    )
-    display_df.columns = ["城市", "省份", "幸福度", "年收入", "房价", "可负担指数"]
+with table_col:
+    st.markdown(f"#### 📋 幸福度排名表（{rank_direction[:6]} {n_cities}）")
+    display_df = top_n_happy.sort_values("happiness", ascending=False)[
+        ["city", "province", "happiness", "income", "house_price", "value_index", "composite_score"]
+    ].copy()
+    display_df.columns = [COLUMN_LABELS[c] for c in display_df.columns]
     display_df.index = range(1, len(display_df) + 1)
     st.dataframe(
-        fmt_table(
+        widgets.fmt_table(
             display_df,
-            {"年收入": "{:,.0f}", "房价": "{:,.0f}", "幸福度": "{:.1f}", "可负担指数": "{:.2f}"},
+            {"年收入": "{:,.0f}", "房价(元/㎡)": "{:,.0f}", "幸福度": "{:.1f}",
+             "可负担指数": "{:.2f}", "综合宜居分": "{:.1f}"},
         ),
-        height=400,
+        height=420,
     )
 
-# ---------------- 第三行：住房可负担性指数 ----------------
-st.markdown('<h2 class="section-title">🏠 住房可负担性指数分析</h2>', unsafe_allow_html=True)
-st.markdown(
-    """
-    <div class="insight-box">
-        <strong>💡 住房可负担性指数 = 年收入 ÷ 房价</strong><br>
-        指数越高，说明该城市居民用年收入能购买的住房面积越大，住房压力相对越小。
-    </div>
-    """,
-    unsafe_allow_html=True,
+# ===========================================================================
+# 第四节：住房可负担性指数分析
+# ===========================================================================
+widgets.section_title("🏠 住房可负担性指数分析")
+widgets.insight_box(
+    "<strong>💡 住房可负担性指数 = 年收入 ÷ 房价</strong><br>"
+    "指数越高，说明该城市居民用年收入能购买的住房面积越大，住房压力相对越小。"
 )
 
-col1, col2 = st.columns(2)
+aff_col1, aff_col2 = st.columns(2)
 
-with col1:
+with aff_col1:
     st.markdown("### 📊 可负担指数城市排名")
-    n_value = top_n_slider("value_n", len(filtered_df))
-    top_n_value = filtered_df.nlargest(n_value, "value_index").sort_values(
-        "value_index", ascending=True
-    )
+    n_value = widgets.top_n_slider("value_n", len(filtered_df))
+    top_n_value = analysis.top_n(filtered_df, "value_index", n_value)
+    chart_data = top_n_value.sort_values("value_index", ascending=True)
 
-    fig, ax = plt.subplots(figsize=(7, max(6, n_value * 0.25)))
-    bars = ax.barh(
-        top_n_value["city"], top_n_value["value_index"],
-        color="#f59e0b", edgecolor="white",
+    fig = charts.barh_ranking(
+        chart_data, "value_index",
+        color="#f59e0b",
+        title=f"住房可负担性 Top {n_value} 城市",
+        xlabel=METRIC_UNITS["value_index"],
+        fmt="{:.2f}",
     )
-    ax.set_xlabel("住房可负担性指数", fontsize=11)
-    ax.set_title(f"住房可负担性 Top {n_value} 城市", fontsize=13, fontweight="bold")
-    ax.grid(axis="x", alpha=0.3, linestyle="--")
-    add_bar_labels(ax, bars, top_n_value["value_index"], fmt="{:.2f}")
-    fig.tight_layout()
     st.pyplot(fig)
     plt.close(fig)
 
-with col2:
+with aff_col2:
     st.markdown("### 📉 全量城市可负担指数分布")
-    sorted_df = filtered_df.sort_values("value_index", ascending=False).reset_index(drop=True)
-
-    fig, ax = plt.subplots(figsize=(7, 5))
-    ax.bar(range(len(sorted_df)), sorted_df["value_index"], color=main_color, alpha=0.8, width=1.0)
-    ax.axhline(y=10, color="red", linestyle="--", alpha=0.7, label="高可负担线 (10)")
-    ax.axhline(y=5, color="orange", linestyle="--", alpha=0.7, label="中等可负担线 (5)")
-    ax.set_xlabel("城市排名", fontsize=11)
-    ax.set_ylabel("可负担指数", fontsize=11)
-    ax.set_title("全国城市住房可负担性全貌", fontsize=13, fontweight="bold")
-    ax.legend(fontsize=9)
-    ax.grid(axis="y", alpha=0.3, linestyle="--")
-    fig.tight_layout()
+    fig = charts.affordability_overview(filtered_df, color=main_color)
     st.pyplot(fig)
     plt.close(fig)
 
-# ---------------- 第四行：TOP 20 住房可负担指数详表 ----------------
-st.markdown('<h2 class="section-title">🏆 住房可负担指数 TOP 20 城市详情</h2>', unsafe_allow_html=True)
+# ===========================================================================
+# 第五节：TOP 20 住房可负担指数详表
+# ===========================================================================
+widgets.section_title("🏆 住房可负担指数 TOP 20 城市详情")
 
-top20 = filtered_df.nlargest(20, "value_index").sort_values("value_index", ascending=False)
+top20 = analysis.top_n(filtered_df, "value_index", 20)
 top20_display = top20[
     ["city", "province", "happiness", "income", "house_price", "value_index"]
 ].copy()
-top20_display.columns = ["城市", "省份", "幸福度", "年收入", "房价(元/㎡)", "可负担指数"]
-# 动态设置行号，防止筛选后数据不足20行时报错
+top20_display.columns = [COLUMN_LABELS[c] for c in top20_display.columns]
 top20_display.index = range(1, len(top20_display) + 1)
 
 col_a, col_b = st.columns([1.2, 1])
 
 with col_a:
     st.dataframe(
-        fmt_table(
+        widgets.fmt_table(
             top20_display,
-            {"年收入": "{:,.0f}", "房价(元/㎡)": "{:,.0f}", "幸福度": "{:.1f}", "可负担指数": "{:.2f}"},
+            {"年收入": "{:,.0f}", "房价(元/㎡)": "{:,.0f}", "幸福度": "{:.1f}",
+             "可负担指数": "{:.2f}"},
             gradient_col="可负担指数",
             cmap="Greens",
-        )
+        ),
+        width="stretch",
     )
 
 with col_b:
-    # 可视化 TOP 20 的对比
     sorted_top = top20.sort_values("value_index", ascending=True)
-    fig, ax = plt.subplots(figsize=(6, 5.5))
-    bars = ax.barh(
-        range(len(sorted_top)), sorted_top["value_index"],
-        color="#f59e0b", label="可负担指数", edgecolor="white",
+    fig = charts.barh_ranking(
+        sorted_top, "value_index",
+        color="#f59e0b",
+        title="TOP 20 住房可负担指数",
+        xlabel=METRIC_UNITS["value_index"],
+        fmt="{:.2f}",
     )
-    ax.set_yticks(range(len(sorted_top)))
-    ax.set_yticklabels(sorted_top["city"], fontsize=9)
-    ax.set_xlabel("可负担指数", fontsize=11)
-    ax.set_title("TOP 20 住房可负担指数", fontsize=13, fontweight="bold")
-    ax.legend(fontsize=9)
-    ax.grid(axis="x", alpha=0.3, linestyle="--")
-    add_bar_labels(ax, bars, sorted_top["value_index"], fmt="{:.2f}", fontsize=8)
-    fig.tight_layout()
     st.pyplot(fig)
     plt.close(fig)
 
-# ---------------- 第五行：省份聚合分析 ----------------
-st.markdown('<h2 class="section-title">🗺️ 省份维度聚合分析</h2>', unsafe_allow_html=True)
+# ===========================================================================
+# 第六节：异常值检测
+# ===========================================================================
+widgets.section_title("🔍 异常值检测（IQR 方法）")
 
-province_agg = (
-    filtered_df.groupby("province")
-    .agg(
-        happiness=("happiness", "mean"),
-        income=("income", "mean"),
-        house_price=("house_price", "mean"),
-        value_index=("value_index", "mean"),
-        city_count=("city", "count"),
-    )
-    .reset_index()
+outlier_happy_mask = analysis.detect_outliers(filtered_df["happiness"])
+outlier_value_mask = analysis.detect_outliers(filtered_df["value_index"])
+combined_mask = outlier_happy_mask | outlier_value_mask
+outlier_df = filtered_df.loc[combined_mask]
+
+st.markdown(
+    f"基于 IQR 规则（四分位距法）在**当前 {len(filtered_df)} 个城市**中识别出 "
+    f"**{len(outlier_df)} 个异常值城市**（幸福度或可负担指数偏离总体较远）。"
 )
-province_agg.columns = ["省份", "平均幸福度", "平均收入", "平均房价", "平均可负担指数", "城市数量"]
-province_agg = province_agg.sort_values("平均幸福度", ascending=False)
 
-col1, col2 = st.columns(2)
-
-with col1:
-    st.markdown("### 各省平均幸福度排名")
-    top_provinces = province_agg.head(15)
-
-    fig, ax = plt.subplots(figsize=(7, 6))
-    bars = ax.barh(
-        range(len(top_provinces)), top_provinces["平均幸福度"],
-        color=main_color, edgecolor="white",
+out_col1, out_col2 = st.columns(2)
+with out_col1:
+    fig = charts.outlier_scatter(
+        filtered_df, "happiness", "value_index", combined_mask,
+        color=main_color,
+        xlabel="幸福度指数",
+        ylabel="可负担指数",
+        title="幸福度 vs 可负担指数（红色为异常值）",
     )
-    ax.set_yticks(range(len(top_provinces)))
-    ax.set_yticklabels(top_provinces["省份"])
-    ax.set_xlabel("平均幸福度", fontsize=11)
-    ax.set_title("平均幸福度 Top 15 省份", fontsize=13, fontweight="bold")
-    ax.grid(axis="x", alpha=0.3, linestyle="--")
-    ax.invert_yaxis()
-    add_bar_labels(ax, bars, top_provinces["平均幸福度"], fmt="{:.1f}", offset=0.3)
-    fig.tight_layout()
     st.pyplot(fig)
     plt.close(fig)
 
-with col2:
+with out_col2:
+    if not outlier_df.empty:
+        out_display = outlier_df[
+            ["city", "province", "happiness", "income", "house_price",
+             "value_index", "composite_score"]
+        ].copy()
+        out_display.columns = [COLUMN_LABELS[c] for c in out_display.columns]
+        out_display.index = range(1, len(out_display) + 1)
+        st.markdown(f"#### 📋 异常值城市明细（{len(out_display)} 个）")
+        st.dataframe(
+            widgets.fmt_table(
+                out_display,
+                {"年收入": "{:,.0f}", "房价(元/㎡)": "{:,.0f}", "幸福度": "{:.1f}",
+                 "可负担指数": "{:.2f}", "综合宜居分": "{:.1f}"},
+                gradient_col="可负担指数",
+                cmap="RdBu_r",
+            ),
+            height=420,
+        )
+    else:
+        st.info("当前筛选范围内未发现异常值城市。")
+
+with st.expander("📖 异常值检测方法说明"):
+    st.markdown(
+        "**IQR 方法（Tukey's fence）**：\n\n"
+        "1. 计算指标的四分位数 Q1 与 Q3，IQR = Q3 - Q1；\n"
+        "2. 判定下界 = Q1 - 1.5×IQR，上界 = Q3 + 1.5×IQR；\n"
+        "3. 数值落在区间之外的样本即为异常值。\n\n"
+        "本页面对「幸福度」与「可负担指数」两个指标分别检测，任一指标异常即标记。"
+    )
+
+# ===========================================================================
+# 第七节：省份维度聚合分析
+# ===========================================================================
+widgets.section_title("🗺️ 省份维度聚合分析")
+
+province_agg = analysis.aggregate_by_province(filtered_df)
+
+prov_col1, prov_col2 = st.columns(2)
+
+with prov_col1:
+    st.markdown("### 各省平均幸福度排名")
+    top_provinces = province_agg.head(15).sort_values("平均幸福度")
+
+    fig = charts.barh_ranking(
+        top_provinces, "平均幸福度",
+        label_col="省份",
+        color=main_color,
+        title="平均幸福度 Top 15 省份",
+        xlabel="平均幸福度",
+        fmt="{:.1f}",
+    )
+    st.pyplot(fig)
+    plt.close(fig)
+
+with prov_col2:
     st.markdown("### 各省平均可负担指数")
     province_value = province_agg.sort_values("平均可负担指数", ascending=False).head(15)
 
-    fig, ax = plt.subplots(figsize=(7, 6))
-    bars = ax.barh(
-        range(len(province_value)), province_value["平均可负担指数"],
-        color="#f59e0b", edgecolor="white",
+    fig = charts.barh_ranking(
+        province_value.sort_values("平均可负担指数"), "平均可负担指数",
+        label_col="省份",
+        color="#f59e0b",
+        title="平均可负担指数 Top 15 省份",
+        xlabel="平均可负担指数",
+        fmt="{:.2f}",
     )
-    ax.set_yticks(range(len(province_value)))
-    ax.set_yticklabels(province_value["省份"])
-    ax.set_xlabel("平均可负担指数", fontsize=11)
-    ax.set_title("平均可负担指数 Top 15 省份", fontsize=13, fontweight="bold")
-    ax.grid(axis="x", alpha=0.3, linestyle="--")
-    ax.invert_yaxis()
-    add_bar_labels(ax, bars, province_value["平均可负担指数"], fmt="{:.2f}")
-    fig.tight_layout()
     st.pyplot(fig)
     plt.close(fig)
 
-# ---------------- 地理可视化地图 ----------------
+prov_table1, prov_table2 = st.columns(2)
+with prov_table1:
+    prov_show = province_agg[["省份", "平均幸福度", "城市数量"]].copy()
+    prov_show.columns = ["省份", "平均幸福度", "城市数量"]
+    prov_show.index = range(1, len(prov_show) + 1)
+    st.dataframe(
+        widgets.fmt_table(prov_show, {"平均幸福度": "{:.1f}"}),
+        height=350,
+        width="stretch",
+    )
+with prov_table2:
+    prov_show2 = province_agg[["省份", "平均收入", "平均房价", "平均可负担指数", "城市数量"]].copy()
+    prov_show2.index = range(1, len(prov_show2) + 1)
+    st.dataframe(
+        widgets.fmt_table(
+            prov_show2,
+            {"平均收入": "{:,.0f}", "平均房价": "{:,.0f}", "平均可负担指数": "{:.2f}"},
+            gradient_col="平均可负担指数",
+            cmap="Greens",
+        ),
+        height=350,
+        width="stretch",
+    )
+
+# ===========================================================================
+# 第八节：地理可视化地图（pyecharts 生成的静态 HTML）
+# ===========================================================================
 @st.cache_data(show_spinner=False)
-def load_map_html(file_name):
+def load_map_html(file_name: str) -> str | None:
     """读取并预处理 HTML 地图内容（缓存字符串，文件变化时自动失效）。"""
     path = NOTEBOOKS_DIR / file_name
     if not path.exists():
@@ -545,90 +588,156 @@ def load_map_html(file_name):
     return path.read_text(encoding="utf-8").replace("width:900px;", "width:100%;")
 
 
-@st.cache_resource(show_spinner=False)
-def _map_iframe_file(html):
-    """将预处理后的 HTML 写入临时文件，供 st.iframe 加载（仅首次写入）。"""
-    import tempfile
-
-    tmp = Path(tempfile.gettempdir()) / f"city_map_{abs(hash(html))}.html"
-    if not tmp.exists():
-        tmp.write_text(html, encoding="utf-8")
-    return tmp
-
-
-def render_map(file_name, fallback_msg, height=520):
-    """渲染 HTML 地图组件（使用 st.iframe，替代已弃用的 st.components.v1.html）。"""
+def render_map(file_name: str, fallback_msg: str, height: int | None = None) -> None:
+    """渲染 HTML 地图组件，组件异常时降级为静态文件提示。"""
     html = load_map_html(file_name)
     if html is None:
         st.warning(fallback_msg)
         return
-    src = _map_iframe_file(html)
-    st.iframe(src=str(src), height=height)
+    height = height or settings.default_map_height
+    try:
+        if settings.map_render_mode == "iframe":
+            import tempfile
+
+            tmp = Path(tempfile.gettempdir()) / f"city_map_{abs(hash(html))}.html"
+            if not tmp.exists():
+                tmp.write_text(html, encoding="utf-8")
+            st.iframe(src=tmp.as_uri(), height=height)
+        else:
+            st.components.v1.html(html, height=height)
+    except Exception as exc:  # noqa: BLE001 - 组件失败不应中断页面
+        logger.warning("地图组件渲染失败（%s），已降级为链接提示。", exc)
+        st.warning(f"{fallback_msg}（组件渲染失败，可直接打开 notebooks/ 下对应文件查看）")
 
 
-st.markdown('<h2 class="section-title">🗺️ 中国城市地理分布地图</h2>', unsafe_allow_html=True)
+if show_maps:
+    widgets.section_title("🗺️ 中国城市地理分布地图")
+    map_col1, map_col2 = st.columns(2)
+    with map_col1:
+        st.markdown("### 中国各省市宜居度地图")
+        render_map("中国各省市宜居度地图.html", "宜居度地图文件未找到")
+    with map_col2:
+        st.markdown("### Top50 城市生活价值指数分布")
+        render_map("Top50的中国城市生活价值指数分布.html", "城市价值指数地图文件未找到")
 
-col_map1, col_map2 = st.columns(2)
-with col_map1:
-    st.markdown("### 中国各省市宜居度地图")
-    render_map("中国各省市宜居度地图.html", "宜居度地图文件未找到")
-with col_map2:
-    st.markdown("### Top50 城市生活价值指数分布")
-    render_map("Top50的中国城市生活价值指数分布.html", "城市价值指数地图文件未找到")
+# ===========================================================================
+# 第九节：完整数据浏览与数据质量报告
+# ===========================================================================
+widgets.section_title("📋 完整数据浏览")
 
-# ---------------- 第六行：数据表格 ----------------
-st.markdown('<h2 class="section-title">📋 完整数据浏览</h2>', unsafe_allow_html=True)
+metadata = data_loader.load_metadata(DATA_DIR)
 
-tab1, tab2 = st.tabs(["🏙️ 城市明细数据", "🗺️ 省份聚合数据"])
+
+def render_quality_report(q: dict) -> None:
+    """渲染数据质量报告。"""
+    st.markdown("#### 📋 数据质量报告")
+    missing_core = sum(
+        v for k, v in q.get("missing_values", {}).items() if k != "province"
+    )
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("城市总数", q["shape"]["rows"])
+    c2.metric("字段数", q["shape"]["cols"])
+    c3.metric("重复城市", q["duplicate_cities"])
+    c4.metric("核心指标缺失值", missing_core)
+
+    with st.expander("📖 数据字典（字段口径与来源）", expanded=False):
+        if metadata:
+            st.json(metadata)
+        else:
+            st.info("未找到 data/metadata.json。")
+
+    with st.expander("🔬 数据完整性明细", expanded=False):
+        missing_df = pd.DataFrame(
+            [{"字段": k, "缺失值": v} for k, v in q.get("missing_values", {}).items()]
+        )
+        st.dataframe(missing_df, hide_index=True, width="stretch")
+
+        num_summary = q.get("numeric_summary", {})
+        if num_summary:
+            summary_rows = []
+            for col, stats in num_summary.items():
+                row = {"指标": COLUMN_LABELS.get(col, col)}
+                row.update(stats)
+                summary_rows.append(row)
+            st.dataframe(
+                pd.DataFrame(summary_rows),
+                hide_index=True,
+                width="stretch",
+            )
+
+    src_counts = q.get("source_city_counts", {})
+    if src_counts:
+        st.markdown("##### 源文件城市覆盖度")
+        cov_df = pd.DataFrame(
+            [{"数据文件": k, "城市数": v} for k, v in src_counts.items()]
+        )
+        st.dataframe(cov_df, hide_index=True, width="stretch")
+    st.caption(f"数据参考年份：{DATA_REF_YEAR} · 数据版本：v{APP_VERSION}")
+
+
+tab1, tab2, tab3 = st.tabs(["🏙️ 城市明细数据", "🗺️ 省份聚合数据", "✅ 数据质量报告"])
 
 with tab1:
-    display_df = filtered_df[
-        ["city", "province", "happiness", "income", "house_price", "value_index"]
+    city_display = filtered_df[
+        ["city", "province", "happiness", "income", "house_price",
+         "population", "value_index", "composite_score"]
     ].copy()
-    display_df.columns = ["城市", "省份", "幸福度", "年收入", "房价(元/㎡)", "可负担指数"]
-    display_df = display_df.sort_values("可负担指数", ascending=False).reset_index(drop=True)
-    display_df.index = range(1, len(display_df) + 1)
+    city_display.columns = [COLUMN_LABELS[c] for c in city_display.columns]
+    city_display = city_display.sort_values("可负担指数", ascending=False).reset_index(drop=True)
+    city_display.index = range(1, len(city_display) + 1)
 
     st.dataframe(
-        fmt_table(
-            display_df,
-            {"年收入": "{:,.0f}", "房价(元/㎡)": "{:,.0f}", "幸福度": "{:.1f}", "可负担指数": "{:.2f}"},
+        widgets.fmt_table(
+            city_display,
+            {"年收入": "{:,.0f}", "房价(元/㎡)": "{:,.0f}", "常住人口(万)": "{:,.0f}",
+             "幸福度": "{:.1f}", "可负担指数": "{:.2f}", "综合宜居分": "{:.1f}"},
             gradient_col="可负担指数",
             cmap="YlOrRd",
         ),
         height=500,
     )
 
-    st.download_button(
-        label="📥 下载当前筛选数据 (CSV)",
-        data=display_df.to_csv(index=False).encode("utf-8-sig"),
-        file_name="中国城市生活成本与幸福感数据.csv",
-        mime="text/csv",
-    )
+    dl_col1, dl_col2, dl_col3 = st.columns(3)
+    with dl_col1:
+        st.download_button(
+            "📥 下载 CSV",
+            data=city_display.to_csv(index=False).encode("utf-8-sig"),
+            file_name="中国城市生活成本与幸福感数据.csv",
+            mime="text/csv",
+            width="stretch",
+        )
+    with dl_col2:
+        st.download_button(
+            "📥 下载 Excel",
+            data=to_excel_bytes(city_display),
+            file_name="中国城市生活成本与幸福感数据.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            width="stretch",
+        )
+    with dl_col3:
+        st.download_button(
+            "📥 下载 JSON",
+            data=city_display.to_json(orient="records", force_ascii=False, indent=2).encode("utf-8"),
+            file_name="中国城市生活成本与幸福感数据.json",
+            mime="application/json",
+            width="stretch",
+        )
 
 with tab2:
     st.dataframe(
-        fmt_table(
+        widgets.fmt_table(
             province_agg,
-            {"平均幸福度": "{:.1f}", "平均收入": "{:,.0f}", "平均房价": "{:,.0f}", "平均可负担指数": "{:.2f}"},
+            {"平均幸福度": "{:.1f}", "平均收入": "{:,.0f}", "平均房价": "{:,.0f}",
+             "常住人口": "{:,.0f}", "平均可负担指数": "{:.2f}", "平均综合宜居分": "{:.1f}"},
             gradient_col="平均幸福度",
             cmap="RdYlGn",
         ),
         height=500,
+        width="stretch",
     )
 
+with tab3:
+    render_quality_report(quality)
+
 # ---------------- 页脚 ----------------
-st.markdown("---")
-st.markdown(
-    """
-    <div class="footer">
-        <p>📊 中国城市生活成本与幸福感分析可视化 | 数据来源：全国300+城市统计数据</p>
-        <p>💡 住房可负担性指数 = 年收入 ÷ 房价（元/㎡），数值越高代表住房压力越小</p>
-        <p>Made with ❤️ using Streamlit · Matplotlib · Seaborn · Pandas</p>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
-
-df = load_data(_data_signature())
+widgets.render_footer()

@@ -1,0 +1,54 @@
+{
+  "project": "中国城市生活成本与幸福感分析可视化",
+  "version": "2.0.0",
+  "description": "全国 248 个地级及以上城市的幸福度、收入、房价、人口与地理坐标数据。",
+  "reference_year": 2024,
+  "data_scope": "中国大陆 31 个省级行政区 + 港澳台，共 248 个城市（含直辖市 / 省会 / 地级市）。",
+  "unit_note": "收入为年收入（元）；房价为每平米均价（元/㎡）；人口为常住人口（万人）；幸福度为指数（0-100）。",
+  "derived_metrics": {
+    "value_index": "住房可负担指数 = 年收入 ÷ 房价（元/㎡），数值越高代表住房压力越小。",
+    "composite_score": "综合宜居评分（0-100）= 幸福度与可负担指数的加权标准化（权重 0.6 / 0.4）。"
+  },
+  "datasets": {
+    "province.csv": {
+      "description": "城市-省份对照表",
+      "columns": { "city": "城市名称", "province": "所属省级行政区" },
+      "rows": 248,
+      "source": "行政区划公开资料"
+    },
+    "happiness.csv": {
+      "description": "城市幸福度指数",
+      "columns": { "city": "城市名称", "happiness": "幸福度指数（0-100）" },
+      "rows": 248,
+      "source": "居民幸福度调查（演示数据，非官方统计）"
+    },
+    "income.csv": {
+      "description": "城市居民年收入",
+      "columns": { "city": "城市名称", "income": "年收入（元）" },
+      "rows": 248,
+      "source": "收入统计年鉴（演示数据，非官方统计）"
+    },
+    "house_price.csv": {
+      "description": "城市房价",
+      "columns": { "city": "城市名称", "house_price": "住房均价（元/㎡）" },
+      "rows": 248,
+      "source": "房产交易平台均价（演示数据，非官方统计）"
+    },
+    "location.csv": {
+      "description": "城市地理坐标",
+      "columns": { "city": "城市名称", "longitude": "经度", "latitude": "纬度" },
+      "rows": 248,
+      "source": "地理坐标公开资料"
+    },
+    "population.csv": {
+      "description": "城市常住人口",
+      "columns": { "city": "城市名称", "population": "常住人口（万人）" },
+      "rows": 248,
+      "source": "人口统计（演示数据，主要城市为近似公开值，其余为确定性估计）"
+    }
+  },
+  "regeneration": {
+    "population": "python scripts/generate_population.py",
+    "maps": "python scripts/generate_maps.py"
+  }
+}

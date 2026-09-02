@@ -1,0 +1,26 @@
+# 产物与缓存
+logs/
+*.log
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.ipynb_checkpoints/
+
+# 环境与密钥
+.env
+.env.local
+
+# 编辑器
+.vscode/
+.idea/
+
+# 系统文件
+Thumbs.db
+.DS_Store
+
+# 构建产物
+*.egg-info/
+build/
+dist/

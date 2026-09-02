@@ -1,0 +1,132 @@
+"""全局配置模块：路径、数据常量、颜色主题与环境变量设置。"""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# 路径（基于本文件位置推导，跨环境可移植）
+# ---------------------------------------------------------------------------
+BASE_DIR: Path = Path(__file__).resolve().parent.parent.parent
+DATA_DIR: Path = BASE_DIR / "data"
+NOTEBOOKS_DIR: Path = BASE_DIR / "notebooks"
+SCRIPT_DIR: Path = BASE_DIR / "scripts"
+LOG_DIR: Path = BASE_DIR / "logs"
+
+# ---------------------------------------------------------------------------
+# 数据常量
+# ---------------------------------------------------------------------------
+APP_NAME = "中国城市生活成本与幸福感分析"
+APP_VERSION = "2.0.0"
+# 数据参考年份（各字段口径与来源说明见 data/metadata.json）
+DATA_REF_YEAR = 2024
+
+# 原始指标列（来自 CSV）
+NUMERIC_COLS: tuple[str, ...] = ("happiness", "income", "house_price", "population")
+# 派生指标列（加载时计算）
+DERIVED_COLS: tuple[str, ...] = ("value_index", "composite_score")
+# 参与分析的全部指标列
+METRIC_COLS: tuple[str, ...] = NUMERIC_COLS + DERIVED_COLS
+
+# 数据文件 → 展示用中文名称
+DATASET_LABELS: dict[str, str] = {
+    "province.csv": "城市-省份对照表",
+    "happiness.csv": "城市幸福度",
+    "income.csv": "城市年收入",
+    "house_price.csv": "城市房价",
+    "location.csv": "城市经纬度",
+    "population.csv": "城市常住人口",
+}
+
+# 表格展示中文列名
+COLUMN_LABELS: dict[str, str] = {
+    "city": "城市",
+    "province": "省份",
+    "happiness": "幸福度",
+    "income": "年收入",
+    "house_price": "房价(元/㎡)",
+    "population": "常住人口(万)",
+    "value_index": "可负担指数",
+    "composite_score": "综合宜居分",
+}
+
+# 指标单位（用于图表轴标签与说明）
+METRIC_UNITS: dict[str, str] = {
+    "happiness": "幸福度指数",
+    "income": "年收入（元）",
+    "house_price": "房价（元/㎡）",
+    "population": "常住人口（万人）",
+    "value_index": "可负担指数（年收入 ÷ 房价）",
+    "composite_score": "综合宜居评分（0-100）",
+}
+
+# ---------------------------------------------------------------------------
+# 绘图常量
+# ---------------------------------------------------------------------------
+FONT_SANS: list[str] = [
+    "SimHei",
+    "Microsoft YaHei",
+    "PingFang SC",
+    "Noto Sans CJK SC",
+    "DejaVu Sans",
+]
+
+COLOR_MAPS: dict[str, str] = {
+    "默认蓝": "steelblue",
+    "暖橙": "#ff7f50",
+    "森林绿": "#2e8b57",
+    "深紫": "#8b5cf6",
+}
+ACCENT_COLOR = "#f59e0b"  # 可负担指数系列配色
+DANGER_COLOR = "#e74c3c"  # 异常值 / 警戒色
+REG_COLOR = "crimson"     # 回归线颜色
+OUTLIER_COLOR = "#e74c3c"
+
+# ---------------------------------------------------------------------------
+# 环境变量设置（可通过 .env / 环境变量覆盖，见 .env.example）
+# ---------------------------------------------------------------------------
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    val = os.getenv(name)
+    if val is None:
+        return default
+    return val.strip().lower() in {"1", "true", "yes", "on"}
+
+
+@dataclass(frozen=True)
+class Settings:
+    """应用运行设置。
+
+    全部字段可由环境变量覆盖，便于不同部署环境（开发 / 测试 / 生产）差异化配置。
+    """
+
+    log_level: str = "INFO"             # 日志级别: DEBUG / INFO / WARNING / ERROR
+    debug: bool = False                 # 调试模式（打印堆栈等）
+    map_render_mode: str = "components"  # 地图渲染方式: "components" | "iframe"
+    max_comparison_cities: int = 8      # 城市对比工具最多可选城市数
+    default_map_height: int = 520       # 地图组件高度（px）
+    n_boot_regression: int = 100        # seaborn 回归重采样次数（越小渲染越快）
+
+    @classmethod
+    def from_env(cls) -> "Settings":
+        return cls(
+            log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
+            debug=_env_bool("APP_DEBUG", False),
+            map_render_mode=os.getenv("MAP_RENDER_MODE", "components").strip().lower(),
+            max_comparison_cities=_env_int("MAX_COMPARISON_CITIES", 8),
+            default_map_height=_env_int("DEFAULT_MAP_HEIGHT", 520),
+            n_boot_regression=_env_int("N_BOOT_REGRESSION", 100),
+        )
+
+
+def get_settings() -> Settings:
+    """获取全局运行设置（每次调用重新读取环境变量）。"""
+    return Settings.from_env()
