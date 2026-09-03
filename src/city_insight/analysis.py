@@ -5,8 +5,6 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .config import NUMERIC_COLS, DERIVED_COLS
-
 
 def safe_corr(a: pd.Series, b: pd.Series) -> float:
     """安全计算相关系数；样本不足或零方差时返回 NaN。"""

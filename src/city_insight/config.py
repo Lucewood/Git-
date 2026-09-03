@@ -11,8 +11,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 BASE_DIR: Path = Path(__file__).resolve().parent.parent.parent
 DATA_DIR: Path = BASE_DIR / "data"
-NOTEBOOKS_DIR: Path = BASE_DIR / "notebooks"
-SCRIPT_DIR: Path = BASE_DIR / "scripts"
+NOTEBOOKS_DIR: Path = BASE_DIR / "notebooks"  # pyecharts 生成的 HTML 地图
 LOG_DIR: Path = BASE_DIR / "logs"
 
 # ---------------------------------------------------------------------------
@@ -29,16 +28,6 @@ NUMERIC_COLS: tuple[str, ...] = ("happiness", "income", "house_price", "populati
 DERIVED_COLS: tuple[str, ...] = ("value_index", "composite_score")
 # 参与分析的全部指标列
 METRIC_COLS: tuple[str, ...] = NUMERIC_COLS + DERIVED_COLS
-
-# 数据文件 → 展示用中文名称
-DATASET_LABELS: dict[str, str] = {
-    "province.csv": "城市-省份对照表",
-    "happiness.csv": "城市幸福度",
-    "income.csv": "城市年收入",
-    "house_price.csv": "城市房价",
-    "location.csv": "城市经纬度",
-    "population.csv": "城市常住人口",
-}
 
 # 表格展示中文列名
 COLUMN_LABELS: dict[str, str] = {
@@ -79,10 +68,8 @@ COLOR_MAPS: dict[str, str] = {
     "森林绿": "#2e8b57",
     "深紫": "#8b5cf6",
 }
-ACCENT_COLOR = "#f59e0b"  # 可负担指数系列配色
 DANGER_COLOR = "#e74c3c"  # 异常值 / 警戒色
 REG_COLOR = "crimson"     # 回归线颜色
-OUTLIER_COLOR = "#e74c3c"
 
 # ---------------------------------------------------------------------------
 # 环境变量设置（可通过 .env / 环境变量覆盖，见 .env.example）

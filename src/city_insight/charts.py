@@ -19,7 +19,6 @@ import seaborn as sns
 
 from .config import (
     FONT_SANS,
-    ACCENT_COLOR,
     DANGER_COLOR,
     REG_COLOR,
     COLUMN_LABELS,
@@ -185,7 +184,6 @@ def affordability_overview(
     ax.legend(fontsize=9)
     ax.grid(axis="y", alpha=0.3, linestyle="--")
     return _finalize(fig)
-
 
 
 # ---------------------------------------------------------------------------
