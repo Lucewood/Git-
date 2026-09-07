@@ -67,3 +67,18 @@ def test_keyword_regex_special_char_no_crash():
     assert not at.exception, f"正则特殊字符关键词抛出了异常: {at.exception}"
     # 特殊字符没有匹配到任何城市，应显示空筛选警告而非崩溃
     assert len(at.warning) > 0
+
+
+def test_forecast_section_city_and_horizon_interaction():
+    """房价预测区块：切换城市并调整预测年数后页面仍正常渲染。"""
+    at = _build_app()
+    at.run()
+
+    city_box = next(sb for sb in at.selectbox if "选择要预测的城市" in sb.label)
+    city_box.set_value("成都").run()
+    assert not at.exception, f"切换预测城市后抛出了异常: {at.exception}"
+
+    at.run()
+    horizon = next(sl for sl in at.slider if "预测年数" in sl.label)
+    horizon.set_value(8).run()
+    assert not at.exception, f"调整预测年数后抛出了异常: {at.exception}"

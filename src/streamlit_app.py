@@ -48,7 +48,7 @@ from city_insight.config import (
 )
 from city_insight.logging_setup import setup_logging
 from city_insight.styles import CUSTOM_CSS
-from city_insight import analysis, charts, data_loader, widgets
+from city_insight import analysis, charts, data_loader, forecast, widgets
 
 settings = get_settings()
 setup_logging(settings.log_level)
@@ -180,6 +180,18 @@ def render_quality_report(q: dict, metadata: dict) -> None:
         st.dataframe(cov_df, hide_index=True, width="stretch")
     st.caption(f"数据参考年份：{DATA_REF_YEAR} · 数据版本：v{APP_VERSION}")
 
+
+@st.cache_resource(show_spinner=False)
+def _load_forecast_pipeline(
+    signature: tuple[tuple[str, int, int], ...], data_dir: Path
+) -> dict:
+    """构建并缓存房价预测机器学习流水线（跨 rerun 复用，数据变化自动失效）。
+
+    仅接受可哈希的基本类型参数；模型对象（梯度提升树）保存在缓存中避免重复训练。
+    """
+    history = forecast.load_house_history(data_dir)
+    cross_df, _ = data_loader.load_data(data_dir, signature)
+    return forecast.build_pipeline(history, cross_df)
 
 
 # ---------------- 数据加载（缓存 + 文件签名感知） ----------------
@@ -452,8 +464,191 @@ if profile_city:
         st.dataframe(detail, hide_index=True, width="stretch")
 
 # ===========================================================================
-# 第三节：城市幸福度排名
+# 第三节：房价趋势分析与机器学习预测
 # ===========================================================================
+widgets.section_title("🤖 房价趋势分析与机器学习预测")
+
+with st.expander("📖 预测方法论与数据口径说明", expanded=False):
+    st.markdown(
+        f"**机器学习策略：全样本城市面板 + 递归多步预测**\n\n"
+        f"1. **历史数据**：`data/house_price_history.csv` 提供 2005–{DATA_REF_YEAR} 年各城市年度住房均价"
+        f"（{DATA_REF_YEAR} 年与房价快照完全一致；历史序列按演示口径重建，非官方统计）；\n"
+        f"2. **特征工程**：对每个「城市 × 年份」样本构造滞后涨幅（1/3/5 年）、长期年均涨幅、"
+        f"涨幅波动率、房价收入比（历年收入用宏观工资增速近似）与城市收入 / 人口等静态基本面，"
+        f"并加入「全国上一年平均涨幅」刻画宏观周期；\n"
+        f"3. **中心化建模**：目标 = 下一年城市涨幅 − 全国同期涨幅，去除共同宏观冲击后，"
+        f"用梯度提升回归树（scikit-learn GradientBoosting；未安装时自动回退 numpy 岭回归）拟合，"
+        f"最近 3 年作为外样本验证集；\n"
+        f"4. **递归外推**：以 {DATA_REF_YEAR} 年价格为起点逐年滚动预测，"
+        f"预测值 = 模型预测偏离 + 全国涨幅维持近期水平的宏观情景，并按验证残差标准差"
+        f"给出 {forecast.DEFAULT_CONF * 100:.0f}% 置信区间。\n\n"
+        f"> ⚠️ 数据为演示合成口径（见 data/metadata.json），预测仅用于展示机器学习建模流程，"
+        f"不构成任何投资 / 购房建议。"
+    )
+
+# 一次性构建 / 训练预测流水线（模型跨 rerun 缓存，仅在数据变化时重训）
+try:
+    forecast_pipeline = _load_forecast_pipeline(data_loader.data_signature(DATA_DIR), DATA_DIR)
+    forecast_ready = forecast_pipeline is not None and (
+        forecast_pipeline["artifacts"]["model"] is not None
+        or forecast_pipeline["artifacts"]["ridge"] is not None
+    )
+except FileNotFoundError as exc:
+    st.warning(f"房价历史数据缺失，无法进行趋势预测：{exc}")
+    forecast_pipeline, forecast_ready = None, False
+
+if not forecast_ready:
+    st.info("预测引擎暂不可用：请确认 data/house_price_history.csv 存在，且包含 2005–2024 完整历史序列。")
+else:
+    artifacts = forecast_pipeline["artifacts"]
+    fc_metrics = artifacts["metrics"]
+
+    fc_ctrl, fc_meta = st.columns([1.25, 1])
+    with fc_ctrl:
+        default_index = int(df.index[df["city"] == "北京"][0]) if (df["city"] == "北京").any() else 0
+        fc_city = st.selectbox(
+            "🏙️ 选择要预测的城市",
+            options=df["city"].tolist(),
+            index=default_index,
+            key="fc_city",
+            format_func=lambda c: f"{c}（{province_map.get(c, '-')}）",
+        )
+        fc_horizon = st.slider(
+            f"📅 预测年数（自 {DATA_REF_YEAR + 1} 年起）",
+            1, forecast.MAX_HORIZON, forecast.DEFAULT_HORIZON, key="fc_horizon",
+        )
+    with fc_meta:
+        st.markdown("##### 🧠 模型概况")
+        backend_name = forecast.MODEL_NAMES.get(artifacts["backend"], artifacts["backend"])
+        st.markdown(
+            f"- **算法**：{backend_name}\n"
+            f"- **训练 / 验证样本**：{fc_metrics['train_samples']:,} / {fc_metrics['test_samples']:,} 条"
+            f"（验证期 {fc_metrics['test_years'][0]}–{fc_metrics['test_years'][1]} 年）\n"
+            f"- **外样本 RMSE / R²**：{fc_metrics['rmse'] * 100:.1f}% / {fc_metrics['r2']:.2f}，"
+            f"方向命中率 {fc_metrics['hit_rate'] * 100:.0f}%"
+        )
+
+    # 递归预测
+    fc = None
+    try:
+        fc = forecast.forecast_city(forecast_pipeline, fc_city, horizon=int(fc_horizon))
+    except ValueError as exc:
+        st.warning(str(exc))
+
+    if fc is not None:
+        hist_stats = forecast.city_history_stats(forecast_pipeline["history"], fc_city)
+        fc_last_year = int(fc["forecast"]["year"].iloc[-1])
+
+        g1, g2, g3, g4 = st.columns(4)
+        with g1:
+            widgets.metric_card(
+                "🏠 参考年房价", f"¥{fc['last_price']:,.0f}",
+                sub=f"{fc['province']} · {fc['start_year']}–{DATA_REF_YEAR} 序列",
+            )
+        with g2:
+            widgets.metric_card(
+                f"📈 {fc_horizon} 年后中位房价", f"¥{fc['future_point']:,.0f}",
+                sub=f"机器学习递归预测（至 {fc_last_year}）",
+            )
+        with g3:
+            low_pct = (fc["future_low"] / fc["last_price"] - 1.0) * 100.0
+            high_pct = (fc["future_high"] / fc["last_price"] - 1.0) * 100.0
+            widgets.metric_card(
+                "📊 预测累计变化", f"{fc['total_change_pct']:+.1f}%",
+                sub=f"{low_pct:+.1f}% ~ {high_pct:+.1f}%",
+            )
+        with g4:
+            widgets.metric_card(
+                "🧭 预测年均增速", f"{fc['cagr_pct']:+.2f}%/年",
+                sub=f"置信水平 {fc['confidence'] * 100:.0f}%",
+            )
+
+        widgets.insight_box(
+            forecast.build_narrative(fc_city, fc["province"], hist_stats, fc, artifacts)
+        )
+
+        f_plot, f_side = st.columns([1.65, 1])
+        with f_plot:
+            fig = charts.house_trend_forecast_chart(
+                fc["hist"], fc["forecast"],
+                hist_color=main_color,
+                conf=fc["confidence"],
+                title=f"「{fc_city}」房价历史走势与机器学习预测（{fc['start_year']}–{fc_last_year}）",
+            )
+            st.pyplot(fig)
+            plt.close(fig)
+        with f_side:
+            st.markdown("#### 🧠 关键驱动特征（全样本模型）")
+            imp_df = artifacts["importance"].head(8).copy()
+            imp_df["特征"] = imp_df["feature"].map(forecast.FEATURE_LABELS)
+            imp_df = imp_df.sort_values("importance").reset_index(drop=True)
+            fig2 = charts.barh_ranking(
+                imp_df, "importance", label_col="特征", color="#8b5cf6",
+                title="对下一年房价涨幅的贡献",
+                xlabel="特征重要性", fmt="{:.3f}", figsize=(6.4, 4.4),
+            )
+            st.pyplot(fig2)
+            plt.close(fig2)
+            st.caption("重要性来自全量 248 城面板模型；年份 / 全国动量等宏观特征用于刻画周期。")
+
+        _fc_pct = lambda v: "—" if v is None else f"{v * 100:+.1f}%"
+
+        fc_review, fc_detail = st.columns([1, 1.25])
+        with fc_review:
+            st.markdown(f"#### 📜 历史回顾（{fc['start_year']}–{DATA_REF_YEAR}）")
+            recap_df = pd.DataFrame(
+                {
+                    "指标": [
+                        f"起始年房价（{fc['start_year']}）",
+                        f"参考年房价（{DATA_REF_YEAR}）",
+                        f"{DATA_REF_YEAR - fc['start_year']} 年年均涨幅",
+                        "近 5 年年均涨幅",
+                        "近 10 年年均涨幅",
+                        "历史年波动率（对数涨幅）",
+                    ],
+                    "数值": [
+                        f"¥{hist_stats['start_price']:,.0f}",
+                        f"¥{hist_stats['ref_price']:,.0f}",
+                        _fc_pct(hist_stats["cagr_total"]),
+                        _fc_pct(hist_stats["cagr_5y"]),
+                        _fc_pct(hist_stats["cagr_10y"]),
+                        f"{hist_stats['volatility'] * 100:.1f}%",
+                    ],
+                }
+            )
+            st.dataframe(recap_df, hide_index=True, width="stretch")
+
+        with fc_detail:
+            st.markdown(f"#### 🗓️ 逐年预测明细（{DATA_REF_YEAR + 1}–{fc_last_year}）")
+            fc_detail_df = fc["forecast"].copy()
+            fc_detail_df.columns = ["年份", "预测房价", "区间下限", "区间上限", "同比涨幅"]
+            st.dataframe(
+                widgets.fmt_table(
+                    fc_detail_df,
+                    {"预测房价": "{:,.0f}", "区间下限": "{:,.0f}",
+                     "区间上限": "{:,.0f}", "同比涨幅": "{:+.2f}%"},
+                    gradient_col="预测房价",
+                    cmap="YlOrRd",
+                ),
+                hide_index=True,
+                width="stretch",
+            )
+            st.download_button(
+                "⬇️ 下载预测明细（CSV）",
+                data=fc["forecast"].to_csv(index=False).encode("utf-8-sig"),
+                file_name=f"{fc_city}房价趋势预测_{DATA_REF_YEAR + 1}-{fc_last_year}.csv",
+                mime="text/csv",
+            )
+
+        st.caption(
+            "注：预测为基于演示数据的机器学习外推，置信区间随预测期延长而变宽；"
+            "房价单位为元/㎡，同比涨幅为预测年度涨幅（%）。"
+        )
+
+# ===========================================================================
+# 第四节：城市幸福度排名
+# ===========================================================================
+
 widgets.section_title("😊 城市幸福度排名")
 
 rank_col, table_col = st.columns([1.5, 1])
@@ -494,7 +689,7 @@ with table_col:
     )
 
 # ===========================================================================
-# 第四节：住房可负担性指数分析
+# 第五节：住房可负担性指数分析
 # ===========================================================================
 widgets.section_title("🏠 住房可负担性指数分析")
 widgets.insight_box(
@@ -527,7 +722,7 @@ with aff_col2:
     plt.close(fig)
 
 # ===========================================================================
-# 第五节：TOP 20 住房可负担指数详表
+# 第六节：TOP 20 住房可负担指数详表
 # ===========================================================================
 widgets.section_title("🏆 住房可负担指数 TOP 20 城市详情")
 
@@ -561,7 +756,7 @@ with col_b:
     plt.close(fig)
 
 # ===========================================================================
-# 第六节：异常值检测
+# 第七节：异常值检测
 # ===========================================================================
 widgets.section_title("🔍 异常值检测（IQR 方法）")
 
@@ -615,7 +810,7 @@ with st.expander("📖 异常值检测方法说明"):
     )
 
 # ===========================================================================
-# 第七节：省份维度聚合分析
+# 第八节：省份维度聚合分析
 # ===========================================================================
 widgets.section_title("🗺️ 省份维度聚合分析")
 
@@ -678,7 +873,7 @@ with prov_table2:
     )
 
 # ===========================================================================
-# 第八节：地理可视化地图（pyecharts 生成的静态 HTML）
+# 第九节：地理可视化地图（pyecharts 生成的静态 HTML）
 # ===========================================================================
 if show_maps:
     widgets.section_title("🗺️ 中国城市地理分布地图")
@@ -691,7 +886,7 @@ if show_maps:
         render_map("Top50的中国城市生活价值指数分布.html", "城市价值指数地图文件未找到")
 
 # ===========================================================================
-# 第九节：完整数据浏览与数据质量报告
+# 第十节：完整数据浏览与数据质量报告
 # ===========================================================================
 widgets.section_title("📋 完整数据浏览")
 

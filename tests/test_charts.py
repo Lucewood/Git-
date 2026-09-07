@@ -86,3 +86,29 @@ def test_outlier_scatter(sample_df):
             color="steelblue", xlabel="x", ylabel="y", title="t",
         )
     )
+
+
+def test_house_trend_forecast_chart():
+    import pandas as pd
+
+    hist = pd.DataFrame({
+        "year": [2005 + i for i in range(5)],
+        "house_price": [1000.0 * (1.05 ** i) for i in range(5)],
+    })
+    fcst = pd.DataFrame({
+        "year": [2010, 2011, 2012],
+        "point": [1300.0, 1400.0, 1500.0],
+        "low": [1250.0, 1300.0, 1350.0],
+        "high": [1350.0, 1500.0, 1650.0],
+    })
+    fig = charts.house_trend_forecast_chart(hist, fcst, hist_color="steelblue", conf=0.8)
+    _assert_fig(fig)
+
+
+def test_house_trend_forecast_chart_empty_forecast():
+    import pandas as pd
+
+    hist = pd.DataFrame({"year": [2005, 2006], "house_price": [100.0, 110.0]})
+    empty = pd.DataFrame(columns=["year", "point", "low", "high"])
+    fig = charts.house_trend_forecast_chart(hist, empty)
+    _assert_fig(fig)

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "city-insight"
-version = "2.0.0"
+version = "2.1.0"
 description = "中国城市生活成本与幸福感分析可视化（Streamlit 交互式网页应用）"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -14,6 +14,7 @@ dependencies = [
     "numpy>=1.26",
     "matplotlib>=3.8",
     "seaborn>=0.13",
+    "scikit-learn>=1.4",
     "openpyxl>=3.1",
 ]
 

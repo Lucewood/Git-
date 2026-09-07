@@ -12,6 +12,7 @@
 | --- | --- |
 | 📈 核心指标关联分析 | 收入/房价 vs 幸福度散点 + 回归线、全指标相关性热力图、指标分布 |
 | 🔬 城市对比与画像 | 多城市多指标对比图、单城市指标百分位画像 |
+| 🤖 房价趋势分析与预测 | 选定城市后基于 2005–2024 年历史序列 + 全样本梯度提升模型递归预测房价趋势（含置信区间与特征重要性） |
 | 😊 幸福度排名 | Top/Bottom N 排名（条形图 + 表格） |
 | 🏠 住房可负担性分析 | 可负担指数 = 年收入 ÷ 房价，全量分布 + 阈值参考线 |
 | 🔍 异常值检测 | IQR 方法识别幸福度 / 可负担指数异常城市 |
@@ -33,6 +34,7 @@
 │       ├── logging_setup.py      # 统一日志（控制台 + 滚动文件）
 │       ├── data_loader.py        # CSV 加载 / 合并 / 派生指标 / 质量校验
 │       ├── analysis.py           # 纯函数分析逻辑（相关、异常值、聚合）
+│       ├── forecast.py           # 房价历史 + 特征工程 + 机器学习预测
 │       ├── charts.py             # Matplotlib / Seaborn 图表工厂
 │       ├── widgets.py            # Streamlit UI 组件封装
 │       └── styles.py             # 页面 CSS
@@ -40,6 +42,7 @@
 ├── notebooks/                    # pyecharts 生成的 HTML 地图
 ├── scripts/
 │   ├── generate_population.py    # 人口数据生成（可复现）
+│   ├── generate_house_price_history.py  # 房价历史序列生成（可复现）
 │   └── generate_maps.py          # HTML 地图再生成
 ├── tests/                        # pytest 单元测试 + AppTest 端到端测试
 ├── .streamlit/config.toml        # Streamlit 服务配置
@@ -80,6 +83,7 @@ pytest -v
 
 - `tests/test_data_loader.py`：数据加载 / 合并 / 派生指标 / 质量校验
 - `tests/test_analysis.py`：相关、异常值、聚合等纯函数逻辑
+- `tests/test_forecast.py`：房价历史加载、特征工程、模型训练与递归预测
 - `tests/test_charts.py`：图表工厂返回合法 Figure
 - `tests/test_streamlit_app.py`：基于 Streamlit AppTest 的无头端到端测试
 
@@ -87,7 +91,7 @@ pytest -v
 
 ## 📊 数据说明
 
-`data/` 下共 6 个 CSV（各 248 行）+ 1 个数据字典 `metadata.json`：
+`data/` 下共 7 个 CSV（6 个截面文件各 248 行 + 1 个房价历史文件 4960 行）+ 1 个数据字典 `metadata.json`：
 
 | 文件 | 字段 | 单位 |
 | --- | --- | --- |
@@ -95,6 +99,7 @@ pytest -v
 | `happiness.csv` | city, happiness | 指数 0-100 |
 | `income.csv` | city, income | 元/年 |
 | `house_price.csv` | city, house_price | 元/㎡ |
+| `house_price_history.csv` | city, year, house_price | 元/㎡（2005–2024，演示口径） |
 | `population.csv` | city, population | 万人 |
 | `location.csv` | city, longitude, latitude | 度 |
 
@@ -105,6 +110,7 @@ pytest -v
 数据管道（可复现）：
 ```bash
 python scripts/generate_population.py   # 重新生成人口数据
+python scripts/generate_house_price_history.py  # 重新生成房价历史序列
 python scripts/generate_maps.py         # 重新生成 HTML 地图
 ```
 

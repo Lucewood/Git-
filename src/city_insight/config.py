@@ -18,7 +18,7 @@ LOG_DIR: Path = BASE_DIR / "logs"
 # 数据常量
 # ---------------------------------------------------------------------------
 APP_NAME = "中国城市生活成本与幸福感分析"
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.1.0"
 # 数据参考年份（各字段口径与来源说明见 data/metadata.json）
 DATA_REF_YEAR = 2024
 

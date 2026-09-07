@@ -6,6 +6,7 @@
 - data_loader:    CSV 加载 / 合并 / 派生指标计算 / 数据质量校验
 - analysis:       核心分析逻辑（纯函数，便于单元测试）
 - charts:         Matplotlib/Seaborn 图表工厂（返回 Figure，无 UI 依赖）
+- forecast:       房价历史加载、特征工程与机器学习预测（纯函数）
 - widgets:        Streamlit UI 组件封装（指标卡片、滑块、表格格式化）
 - styles:         页面自定义 CSS
 
@@ -14,5 +15,5 @@
 
 from __future__ import annotations
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 __app_name__ = "中国城市生活成本与幸福感分析"

@@ -324,3 +324,60 @@ def outlier_scatter(
     ax.legend(fontsize=9)
     ax.grid(True, alpha=0.3, linestyle="--")
     return _finalize(fig)
+
+
+# ---------------------------------------------------------------------------
+# 房价趋势与机器学习预测
+# ---------------------------------------------------------------------------
+def house_trend_forecast_chart(
+    hist: pd.DataFrame,
+    fcst: pd.DataFrame,
+    *,
+    hist_color: str = "steelblue",
+    forecast_color: str = REG_COLOR,
+    conf: float = 0.8,
+    title: str = "房价历史走势与机器学习预测",
+    ylabel: str = "房价（元/㎡）",
+    figsize: tuple[float, float] = (10, 5.4),
+) -> plt.Figure:
+    """历史走势（实线）+ 机器学习递归预测（虚线）与置信区间扇形图。
+
+    Args:
+        hist: 历史长表，需含 year / house_price。
+        fcst: 预测表，需含 year / point / low / high。
+        conf: 置信度（0-1），用于图例文案与区间标注。
+    """
+    from matplotlib.ticker import FuncFormatter
+
+    fig, ax = plt.subplots(figsize=figsize)
+    hist = hist.sort_values("year")
+    fcst = fcst.sort_values("year")
+
+    ax.plot(
+        hist["year"], hist["house_price"], color=hist_color,
+        marker="o", markersize=3.5, linewidth=1.8, label="历史均价",
+    )
+    if not fcst.empty:
+        ax.plot(
+            fcst["year"], fcst["point"], color=forecast_color,
+            marker="o", markersize=3.5, linestyle="--", linewidth=2,
+            label="机器学习预测（中位）",
+        )
+        ax.fill_between(
+            fcst["year"], fcst["low"], fcst["high"],
+            color=forecast_color, alpha=0.15, linewidth=0,
+            label=f"预测区间（{conf * 100:.0f}% 置信）",
+        )
+    if not hist.empty and not fcst.empty:
+        boundary = int(hist["year"].max()) + 0.5
+        ax.axvline(boundary, color="#888", linestyle=":", linewidth=1.2, alpha=0.9)
+
+    ax.set_xlabel("年份", fontsize=11)
+    ax.set_ylabel(ylabel, fontsize=11)
+    ax.set_title(title, fontsize=13, fontweight="bold")
+    ax.grid(True, alpha=0.3, linestyle="--")
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _pos: f"{v:,.0f}"))
+    ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+    ax.legend(fontsize=9, loc="upper left")
+    return _finalize(fig)
+
