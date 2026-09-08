@@ -443,11 +443,14 @@ def render_forecast(
             f"2. **特征工程**：对每个「城市 × 年份」样本构造滞后涨幅（1/3/5 年）、长期年均涨幅、"
             f"涨幅波动率、房价收入比（历年收入用宏观工资增速近似）与城市收入 / 人口等静态基本面，"
             f"并加入「全国上一年平均涨幅」刻画宏观周期；\n"
-            f"3. **中心化建模**：目标 = 下一年城市涨幅 − 全国同期涨幅，去除共同宏观冲击后，"
-            f"用梯度提升回归树（scikit-learn GradientBoosting；未安装时自动回退 numpy 岭回归）拟合，"
-            f"最近 3 年作为外样本验证集；\n"
-            f"4. **递归外推**：以 {DATA_REF_YEAR} 年价格为起点逐年滚动预测，"
-            f"预测值 = 模型预测偏离 + 全国涨幅维持近期水平的宏观情景，并按验证残差标准差"
+            f"3. **中心化建模与滚动验证**：目标 = 下一年城市涨幅 − 全国同期涨幅（去除共同"
+            f"宏观冲击），用梯度提升回归树（scikit-learn GradientBoosting；未安装时自动回退 "
+            f"numpy 岭回归）拟合。采用 expanding walk-forward（滚动扩展窗口）评估："
+            f"对最近 3 个验证年逐年重训并外推，各验证年模型不接触当年及以后数据，"
+            f"严格避免前瞻偏差，逐年生模型留存用于下方「外样本回测」；\n"
+            f"4. **递归外推**：以 {DATA_REF_YEAR} 年价格为起点逐年滚动预测（预测期年份特征被"
+            f"钳制在训练域内，避免树模型外推抖动），预测值 = 模型预测偏离 + 全国涨幅宏观情景"
+            f"（可在下方切换保守 / 基准 / 乐观），并按验证残差标准差"
             f"给出 {forecast.DEFAULT_CONF * 100:.0f}% 置信区间。\n\n"
             f"> ⚠️ 数据为演示合成口径（见 data/metadata.json），预测仅用于展示机器学习建模流程，"
             f"不构成任何投资 / 购房建议。"
@@ -457,7 +460,7 @@ def render_forecast(
     pipeline = None
     try:
         pipeline = _load_forecast_pipeline(
-            data_loader.data_signature(DATA_DIR), DATA_DIR
+            data_loader.data_signature(DATA_DIR, (forecast.HISTORY_FILE,)), DATA_DIR
         )
     except FileNotFoundError as exc:
         st.warning(f"房价历史数据缺失，无法进行趋势预测：{exc}")
@@ -494,13 +497,29 @@ def render_forecast(
             f"📅 预测年数（自 {DATA_REF_YEAR + 1} 年起）",
             1, forecast.MAX_HORIZON, forecast.DEFAULT_HORIZON, key="fc_horizon",
         )
+        fc_scenario_label = st.radio(
+            "🎚️ 全国宏观情景（以近一年走势为基准，±1.5 个百分点）",
+            options=(
+                "保守（下调 1.5 个百分点）",
+                "基准（延续近一年走势）",
+                "乐观（上调 1.5 个百分点）",
+            ),
+            index=1, horizontal=True, key="fc_scenario",
+        )
+        fc_macro_adj = {
+            "保守（下调 1.5 个百分点）": -0.015,
+            "基准（延续近一年走势）": None,
+            "乐观（上调 1.5 个百分点）": 0.015,
+        }[fc_scenario_label]
     with fc_meta:
         st.markdown("##### 🧠 模型概况")
         backend_name = forecast.MODEL_NAMES.get(artifacts["backend"], artifacts["backend"])
         st.markdown(
             f"- **算法**：{backend_name}\n"
-            f"- **训练 / 验证样本**：{fc_metrics['train_samples']:,} / {fc_metrics['test_samples']:,} 条"
-            f"（验证期 {fc_metrics['test_years'][0]}–{fc_metrics['test_years'][1]} 年）\n"
+            f"- **训练样本（逐年累计）/ 验证**：{fc_metrics['train_samples']:,} / "
+            f"{fc_metrics['test_samples']:,} 条\n"
+            f"- **验证方式**：walk-forward 逐年重训（{fc_metrics['test_years'][0]}–"
+            f"{fc_metrics['test_years'][1]} 年各外推 1 年）\n"
             f"- **外样本 RMSE / R²**：{fc_metrics['rmse'] * 100:.1f}% / {fc_metrics['r2']:.2f}，"
             f"方向命中率 {fc_metrics['hit_rate'] * 100:.0f}%"
         )
@@ -508,14 +527,19 @@ def render_forecast(
     # 递归预测（单城市失败不中断整页）
     fc = None
     try:
-        fc = forecast.forecast_city(pipeline, fc_city, horizon=int(fc_horizon))
+        fc = forecast.forecast_city(
+            pipeline, fc_city, horizon=int(fc_horizon), macro_adj=fc_macro_adj
+        )
     except Exception as exc:  # noqa: BLE001 - 预测失败仅提示并记录日志
         logger.exception("城市「%s」房价预测失败", fc_city)
         st.warning(f"城市「{fc_city}」预测失败：{exc}")
 
     if fc is None:
         return
+    fc["macro_adj"] = fc_macro_adj
+    fc["scenario_label"] = fc_scenario_label
     _render_forecast_result(fc, fc_city, fc_horizon, artifacts, pipeline, main_color)
+    _render_forecast_validation(pipeline, fc_city, main_color)
 
 def _render_forecast_result(
     fc: dict,
@@ -641,6 +665,98 @@ def _render_forecast_result(
         "注：预测为基于演示数据的机器学习外推，置信区间随预测期延长而变宽；"
         "房价单位为元/㎡，同比涨幅为预测年度涨幅（%）。"
     )
+
+def _render_forecast_validation(
+    pipeline: dict, fc_city: str, main_color: str
+) -> None:
+    """渲染“模型验证与外样本回测”折叠面板（逐年指标 + 选定城市回测）。"""
+    artifacts = pipeline["artifacts"]
+    folds = artifacts.get("folds") or []
+    with st.expander("🎯 模型验证与外样本回测（walk-forward）", expanded=False):
+        st.markdown(
+            "**无前瞻验证**：对每个验证年，用截止其上一年（含）的真实数据重新训练模型"
+            "并外推下一年，验证集不参与训练。下方指标为逐年重训后在外样本上聚合得到，"
+            "可视为模型真实外推能力的估计。"
+        )
+        if folds:
+            st.markdown("##### 📐 逐年外样本指标（验证年 → 预测下一年）")
+            fv = pd.DataFrame(folds)
+            view = pd.DataFrame({
+                "预测年度": fv["target_year"],
+                "验证样本": fv["test_samples"],
+                "RMSE(%)": (fv["rmse"] * 100.0).round(2),
+                "MAE(%)": (fv["mae"] * 100.0).round(2),
+                "R²": fv["r2"].round(3),
+                "方向命中率(%)": (fv["hit_rate"] * 100.0).round(1),
+                "偏离RMSE(%)": (fv["rmse_dev"] * 100.0).round(2),
+                "偏离R²": fv["r2_dev"].round(3),
+            })
+            st.dataframe(
+                widgets.fmt_table(
+                    view,
+                    {"RMSE(%)": "{:.2f}", "MAE(%)": "{:.2f}", "R²": "{:.3f}",
+                     "方向命中率(%)": "{:.1f}", "偏离RMSE(%)": "{:.2f}",
+                     "偏离R²": "{:.3f}"},
+                    gradient_col="R²",
+                    cmap="RdYlGn",
+                ),
+                hide_index=True,
+                width="stretch",
+            )
+            st.caption(
+                "RMSE / MAE / R² / 命中率基于「下一年实际涨幅」口径（验证期全国涨幅按当年"
+                "真实值计入）；带“偏离”前缀的同名指标去掉全国共同涨落后、仅评估城市偏离"
+                "部分的预测能力，与模型的目标空间一致。"
+            )
+        else:
+            st.info("当前流水线未启用逐年 walk-forward 验证（可能是旧版工件）。")
+
+        st.markdown(f"#### 🧭 「{fc_city}」逐年外样本回测（预测 vs 实际）")
+        try:
+            bt = forecast.city_backtest(pipeline, fc_city)
+        except (ValueError, RuntimeError) as exc:
+            st.info(f"该城市暂无可用的回测结果：{exc}")
+            return
+
+        mape = float(bt["error_pct"].abs().mean())
+        max_abs = float(bt["error_pct"].abs().max())
+        v_col1, v_col2, v_col3 = st.columns(3)
+        v_col1.metric("回测年份数", f"{len(bt)} 年")
+        v_col2.metric("平均绝对相对误差", f"{mape:.1f}%")
+        v_col3.metric("最大绝对误差", f"{max_abs:.1f}%")
+
+        v_plot, v_tab = st.columns([1.55, 1])
+        with v_plot:
+            fig = charts.house_backtest_chart(
+                pipeline["history"], bt,
+                conf=forecast.DEFAULT_CONF,
+                title=f"「{fc_city}」walk-forward 外样本回测",
+            )
+            render_fig(fig)
+            st.caption(
+                "回测口径：各验证年使用“截止上一年的模型”外推一个年度；验证期的全国涨幅取"
+                "当年真实值，用于单独衡量机器学习“城市偏离”部分的预测力（不含宏观情景假设）。"
+            )
+        with v_tab:
+            bt_view = bt.copy()
+            bt_view.columns = [
+                "年份", "上一年房价", "预测", "区间下限", "区间上限", "实际", "相对误差(%)"
+            ]
+            st.dataframe(
+                widgets.fmt_table(
+                    bt_view,
+                    {"上一年房价": "{:,.0f}", "预测": "{:,.0f}",
+                     "区间下限": "{:,.0f}", "区间上限": "{:,.0f}",
+                     "实际": "{:,.0f}", "相对误差(%)": "{:+.1f}"},
+                    gradient_col="相对误差(%)",
+                    cmap="RdBu_r",
+                ),
+                hide_index=True,
+                width="stretch",
+            )
+            st.caption("房价单位：元/㎡；相对误差 =（预测 ÷ 实际 − 1）× 100%。")
+
+
 
 def render_happiness_ranking(
     filtered_df: pd.DataFrame, main_color: str

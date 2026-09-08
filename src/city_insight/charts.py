@@ -381,3 +381,59 @@ def house_trend_forecast_chart(
     ax.legend(fontsize=9, loc="upper left")
     return _finalize(fig)
 
+
+def house_backtest_chart(
+    hist: pd.DataFrame,
+    backtest: pd.DataFrame,
+    *,
+    hist_color: str = "steelblue",
+    actual_color: str = "#2e8b57",
+    pred_color: str = REG_COLOR,
+    conf: float = 0.8,
+    title: str = "外样本回测：预测 vs 实际房价",
+    ylabel: str = "房价（元/㎡）",
+    figsize: tuple[float, float] = (9.6, 5.0),
+) -> plt.Figure:
+    """walk-forward 外样本回测图：真实历史 + 回测实际 + 模型逐点预测与区间。
+
+    Args:
+        hist: 历史长表（year / house_price），仅取近端年份用于对照背景。
+        backtest: 回测表（year / point / low / high / actual）。
+    """
+    from matplotlib.ticker import FuncFormatter
+
+    bt = backtest.sort_values("year").reset_index(drop=True)
+    years = bt["year"].tolist()
+
+    fig, ax = plt.subplots(figsize=figsize)
+    if hist is not None and not hist.empty:
+        win_start = max(int(years[0]) - 4, int(hist["year"].min()))
+        win = hist[(hist["year"] >= win_start) & (hist["year"] <= int(years[-1]))]
+        ax.plot(
+            win["year"], win["house_price"], color=hist_color,
+            linewidth=1.6, marker="o", markersize=3, label="历史实际均价",
+        )
+    ax.plot(
+        years, bt["actual"], color=actual_color, marker="o", markersize=6,
+        linewidth=2.0, label="回测期实际房价",
+    )
+    ax.plot(
+        years, bt["point"], color=pred_color, marker="D", markersize=6,
+        linestyle="--", linewidth=2.0, label="模型预测（外样本）",
+    )
+    if {"low", "high"}.issubset(bt.columns):
+        ax.fill_between(
+            years, bt["low"], bt["high"],
+            color=pred_color, alpha=0.16, linewidth=0,
+            label=f"预测区间（{conf * 100:.0f}%）",
+        )
+    ax.set_xlabel("年份", fontsize=11)
+    ax.set_ylabel(ylabel, fontsize=11)
+    ax.set_title(title, fontsize=13, fontweight="bold")
+    ax.grid(True, alpha=0.3, linestyle="--")
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _pos: f"{v:,.0f}"))
+    ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+    ax.legend(fontsize=9, loc="upper left")
+    return _finalize(fig)
+
+

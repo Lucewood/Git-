@@ -91,6 +91,39 @@ def test_build_narrative_mentions_city_and_model(pipeline):
     assert "RMSE" in text or "R²" in text
 
 
+def test_walk_forward_artifacts_and_city_backtest(pipeline):
+    """walk-forward 工件应提供逐年模型；城市回测应覆盖验证年且点落在区间内。"""
+    artifacts = pipeline["artifacts"]
+    assert artifacts["max_feature_year"] == DATA_REF_YEAR - 1
+    assert len(artifacts["folds"]) >= 2
+    assert set(artifacts["models_by_year"]) == {
+        int(f["test_feature_year"]) for f in artifacts["folds"]
+    }
+    # 聚合指标应同时提供“偏离空间”版本
+    for key in ("rmse_dev", "mae_dev", "r2_dev", "hit_rate_dev"):
+        assert np.isfinite(artifacts["metrics"][key]), f"{key} 不应为 NaN"
+
+    bt = forecast.city_backtest(pipeline, "成都")
+    assert {"year", "point", "actual", "low", "high", "error_pct"} <= set(bt.columns)
+    assert bt["year"].min() >= DATA_REF_YEAR - 3
+    assert (bt["low"] < bt["point"]).all() and (bt["point"] > 0).all()
+    # 预测年的“实际”应与历史序列一致
+    actual_map = pipeline["history"].set_index(["city", "year"])["house_price"]
+    for _, row in bt.iterrows():
+        assert actual_map.loc[("成都", int(row["year"]))] == pytest.approx(row["actual"])
+
+
+def test_forecast_macro_scenario_is_monotonic(pipeline):
+    """宏观情景调整量应使乐观预测价格 ≥ 基准 ≥ 保守预测。"""
+    conf_ = forecast.DEFAULT_CONF
+    base = forecast.forecast_city(pipeline, "深圳", horizon=3, macro_adj=None, conf=conf_)
+    low = forecast.forecast_city(pipeline, "深圳", horizon=3, macro_adj=-0.015, conf=conf_)
+    high = forecast.forecast_city(pipeline, "深圳", horizon=3, macro_adj=0.015, conf=conf_)
+    base_pt = base["forecast"]["point"].to_numpy()
+    assert (high["forecast"]["point"].to_numpy() >= base_pt).all()
+    assert (base_pt >= low["forecast"]["point"].to_numpy()).all()
+
+
 def test_train_growth_model_numpy_fallback(monkeypatch, pipeline):
     """scikit-learn 缺失时应自动回退到 numpy 岭回归且预测仍可用。"""
     monkeypatch.setattr(forecast, "HAVE_SKLEARN", False)

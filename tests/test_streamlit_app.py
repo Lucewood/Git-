@@ -55,7 +55,8 @@ def test_ranking_direction_switch():
     """切换排名方向（Top/Bottom）后应用仍正常。"""
     at = _build_app()
     at.run()
-    at.radio[0].set_value("Bottom N（最低）").run()
+    ranking_box = next(rb for rb in at.radio if rb.label == "查看方向")
+    ranking_box.set_value("Bottom N（最低）").run()
     assert not at.exception
 
 

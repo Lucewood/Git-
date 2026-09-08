@@ -38,10 +38,19 @@ COMPOSITE_WEIGHTS: dict[str, float] = {"happiness": 0.6, "value_index": 0.4}
 # ---------------------------------------------------------------------------
 # 纯函数核心（无 Streamlit 依赖，可单元测试）
 # ---------------------------------------------------------------------------
-def data_signature(data_dir: Path = DATA_DIR) -> tuple[tuple[str, int, int], ...]:
-    """生成数据文件签名（文件名 + mtime + size），文件变化时缓存自动失效。"""
+def data_signature(
+    data_dir: Path = DATA_DIR,
+    extra: tuple[str, ...] = (),
+) -> tuple[tuple[str, int, int], ...]:
+    """生成数据文件签名（文件名 + mtime + size），文件变化时缓存自动失效。
+
+    Args:
+        extra: 需要一并纳入签名的附加数据文件名（如房价预测模块使用的
+            house_price_history.csv），保证此类文件被重建后缓存同步失效。
+    """
+    names = REQUIRED_FILES + tuple(extra)
     files = sorted(
-        (data_dir / name for name in REQUIRED_FILES if (data_dir / name).exists())
+        (data_dir / name for name in names if (data_dir / name).exists())
     )
     signature: list[tuple[str, int, int]] = []
     for file in files:
