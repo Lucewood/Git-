@@ -38,7 +38,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
 
-from city_insight import analysis, charts, data_loader, forecast, widgets
+from city_insight import analysis, career, charts, data_loader, forecast, widgets
 from city_insight.config import (
     APP_NAME,
     APP_VERSION,
@@ -51,6 +51,7 @@ from city_insight.config import (
     METRIC_UNITS,
     get_settings,
 )
+from city_insight.industry_kb import CATEGORIES, EDUCATION_LEVELS, SKILL_TAGS
 from city_insight.logging_setup import setup_logging
 from city_insight.styles import CUSTOM_CSS
 
@@ -79,6 +80,22 @@ TABLE_FORMAT: dict[str, str] = {
     "常住人口(万)": "{:,.0f}",
     "可负担指数": "{:.2f}",
     "综合宜居分": "{:.1f}",
+}
+
+# 就业推荐表格列格式（键 = COLUMN_LABELS 中文列名）
+INDUSTRY_TABLE_FORMAT: dict[str, str] = {
+    "就业占比(%)": "{:.1f}",
+    "平均月薪(元)": "{:,.0f}",
+    "需求景气指数": "{:.1f}",
+    "岗位年增速(%)": "{:+.1f}",
+    "匹配度": "{:.1f}",
+    "技能得分": "{:.0f}",
+    "薪资得分": "{:.0f}",
+    "发展得分": "{:.0f}",
+    "规模得分": "{:.0f}",
+    "宜居得分": "{:.0f}",
+    "需求热度": "{:.1f}",
+    "城市数": "{:,.0f}",
 }
 
 
@@ -911,6 +928,491 @@ def render_outliers(filtered_df: pd.DataFrame, main_color: str) -> None:
             "本页面对「幸福度」与「可负担指数」两个指标分别检测，任一指标异常即标记。"
         )
 
+
+# ===========================================================================
+# 就业指导与产业推荐（数据来自 scripts/crawl_industry.py 的爬虫管道）
+# ===========================================================================
+def render_career_guidance(
+    filtered_df: pd.DataFrame,
+    industry_df: pd.DataFrame,
+    main_color: str,
+    province_map: dict[str, str],
+) -> None:
+    """第十一节：就业指导与产业推荐（基于爬取的城市支柱产业数据库）。"""
+    widgets.section_title("🧭 就业指导与产业推荐")
+
+    if industry_df is None or industry_df.empty:
+        st.info(
+            "未找到支柱产业数据（`data/industry.csv`），就业指导功能暂不可用。\n\n"
+            "请先在项目根目录执行数据管道 `python scripts/crawl_industry.py`，"
+            "爬取城市支柱产业数据后刷新本页。"
+        )
+        return
+
+    _render_career_methodology(industry_df, filtered_df)
+    profile = _render_career_profile_form()
+    st.caption(
+        f"🎯 推荐范围为侧边栏筛选结果（当前 {len(filtered_df)} 个城市 × "
+        f"{int(industry_df['category'].nunique())} 个行业大类）；"
+        "在左侧「分析控制面板」切换省份或数值区间即可改变推荐范围。"
+    )
+
+    scored = career.score_industries(profile, industry_df, filtered_df)
+    if scored.empty:
+        st.warning(
+            "当前筛选范围内没有可匹配的支柱产业记录，"
+            "请放宽筛选条件或清空「期望行业大类」后重试。"
+        )
+        return
+
+    city_rank = career.rank_cities(
+        scored, top_n=profile.top_n, city_df=filtered_df
+    )
+    tab_personal, tab_city, tab_skill = st.tabs(
+        ["🎯 个性化推荐", "🏙️ 城市产业全景", "🧩 技能需求图谱"]
+    )
+    with tab_personal:
+        _render_career_recommendations(profile, scored, city_rank, main_color)
+    with tab_city:
+        _render_career_city_panorama(
+            profile, scored, city_rank, industry_df, main_color, province_map
+        )
+    with tab_skill:
+        _render_career_skill_map(profile, industry_df, main_color)
+
+
+def _render_career_methodology(
+    industry_df: pd.DataFrame, filtered_df: pd.DataFrame
+) -> None:
+    """渲染「数据来源 / 爬虫口径 / 推荐模型」说明面板。"""
+    covered = int(industry_df["city"].nunique()) if "city" in industry_df.columns else 0
+    with st.expander("📖 数据来源、爬虫口径与推荐模型说明", expanded=False):
+        st.markdown(
+            "**1️⃣ 支柱产业数据库（爬虫管道产出）**\n\n"
+            "- 数据管道：`python scripts/crawl_industry.py`（两阶段）\n"
+            "  ① *snapshot*：把种子口径渲染成 8 个区域「支柱产业与人才需求统计快报」"
+            "HTML 页面（`data/raw/industry/`），模拟公开统计网页结构；\n"
+            "  ② *crawl*：用 `city_insight.crawler` 的礼貌抓取器抓取这些页面——"
+            "自定义 User-Agent 标识身份、robots.txt 准入检查、同域请求限速、"
+            "失败指数退避重试、响应按 URL 摘要落盘缓存，再由 "
+            "BeautifulSoup（缺失时回退 stdlib `html.parser`）解析表格，"
+            "最后清洗规范化写入 `data/industry.csv`。\n"
+            "- 合规与可复现：默认只抓取仓库内置离线快照（`file://`），"
+            "不产生对外网络请求；如需对接真实公开统计站点，用 "
+            "`--url https://...` 追加数据源，并请先确认站点 robots.txt 与使用条款。\n\n"
+            "**2️⃣ 字段口径**（口径说明见 `data/metadata.json`）\n\n"
+            "| 字段 | 含义 |\n| --- | --- |\n"
+            "| 支柱产业 / 行业大类 | 具体产业名录与其所属行业大类（共 16 类） |\n"
+            "| 就业占比(%) | 该产业从业人员占城镇就业的比重（演示口径） |\n"
+            "| 平均月薪(元) | 该产业岗位中位月薪，按城市收入水平缩放 |\n"
+            "| 需求景气指数 | 人才需求热度（0-100，越高越缺人） |\n"
+            "| 岗位年增速(%) | 近年岗位数量年均变化 |\n"
+            "| 学历门槛 / 核心技能 | 岗位典型学历要求与产业核心技能标签 |\n\n"
+            "**3️⃣ 推荐打分模型**（可解释的加权模型，权重可在下方滑块调整）\n\n"
+            "```\n"
+            "匹配度 = 100 × 学历修正 × Σ wᵢ·sᵢ / Σ wᵢ\n"
+            "```\n"
+            "- **技能匹配**：你的技能对「该产业核心技能」的覆盖率；\n"
+            "- **薪资待遇**：min(产业平均月薪 ÷ 期望月薪, 1.2) ÷ 1.2；\n"
+            "- **发展空间**：需求景气指数（权重 0.6）+ 岗位增速百分位（权重 0.4）；\n"
+            "- **岗位规模**：该产业就业占比在候选集中的百分位；\n"
+            "- **生活宜居**：城市幸福度 / 可负担指数 / 房价压力百分位合成"
+            "（勾选「优先低生活成本」会加大可负担与房价权重）；\n"
+            "- **学历修正**：学历低于岗位门槛时每档折减 6%（0.94^档差）。\n\n"
+            f"> 当前库覆盖 **{covered} 个城市 / {len(industry_df)} 条「城市 × 支柱产业」记录**，"
+            f"本次推荐候选为筛选后的 {len(filtered_df)} 个城市。\n"
+            "> ⚠️ 产业数据为演示口径合成数据（非官方统计），推荐结果仅用于展示分析流程，"
+            "不构成任何求职 / 报考建议。"
+        )
+
+
+def _render_career_profile_form() -> career.CareerProfile:
+    """渲染求职画像表单（学历 / 期望薪资 / 技能 / 偏好权重），返回 CareerProfile。"""
+    st.markdown("### 🧑‍🎓 求职画像（调整后推荐结果实时刷新）")
+    col_basic, col_skill, col_weight = st.columns([1, 1.25, 1])
+
+    with col_basic:
+        education = st.selectbox(
+            "最高学历",
+            options=list(EDUCATION_LEVELS),
+            index=list(EDUCATION_LEVELS).index(career.DEFAULT_EDUCATION),
+            key="career_education",
+        )
+        target_salary = st.slider(
+            "期望月薪（元/月）", 3000, 40000, 12000, step=500, key="career_salary"
+        )
+        prefer_low_cost = st.toggle(
+            "优先考虑低生活成本城市", value=False, key="career_low_cost",
+            help="开启后会提高「可负担指数」与「低房价」在宜居维度中的权重",
+        )
+        max_results = max(5, int(settings.max_career_results))
+        top_n = st.slider(
+            "展示推荐条数", 5, max_results,
+            min(max(settings.career_top_n, 5), max_results),
+            key="career_top_n",
+        )
+
+    with col_skill:
+        skills = st.multiselect(
+            "技能标签（可多选；选得越准，技能匹配维度越可靠）",
+            options=list(SKILL_TAGS),
+            default=[tag for tag in ("Python", "数据分析") if tag in SKILL_TAGS],
+            key="career_skills",
+            help="标签来自 16 个行业大类的核心技能库（industry_kb.SKILL_TAGS）",
+        )
+        categories = st.multiselect(
+            "期望行业大类（留空 = 不限）",
+            options=list(CATEGORIES),
+            default=[],
+            key="career_categories",
+        )
+
+    with col_weight:
+        st.markdown("**偏好权重**（0-5，越大越看重）")
+        weights: dict[str, float] = {}
+        for key, label in career.WEIGHT_LABELS.items():
+            weights[key] = float(
+                st.slider(
+                    label, 0, 5, int(round(career.DEFAULT_WEIGHTS[key] * 10)),
+                    key=f"career_w_{key}",
+                )
+            )
+
+    return career.CareerProfile(
+        skills=tuple(skills),
+        education=education,
+        target_salary=float(target_salary),
+        categories=tuple(categories),
+        weights=weights,
+        prefer_low_cost=bool(prefer_low_cost),
+        top_n=int(top_n),
+    )
+
+
+# 匹配度构成图的维度定义：(权重键, 子得分列, 中文名)
+CONTRIBUTION_DIMS: tuple[tuple[str, str, str], ...] = (
+    ("skill", "skill_score", "技能匹配"),
+    ("salary", "salary_score", "薪资待遇"),
+    ("growth", "demand_score", "发展空间"),
+    ("scale", "scale_score", "岗位规模"),
+    ("life", "life_score", "生活宜居"),
+)
+
+
+def _career_contributions(
+    profile: career.CareerProfile, frame: pd.DataFrame
+) -> pd.DataFrame:
+    """把各维度子得分按权重折算为「加权得分贡献」，供堆叠条形图使用。"""
+    weights = profile.normalized_weights
+    data = frame.copy()
+    data["推荐项"] = data["city"].astype(str) + " · " + data["industry"].astype(str)
+    for key, column, _label in CONTRIBUTION_DIMS:
+        data[f"w_{column}"] = (
+            pd.to_numeric(data[column], errors="coerce").fillna(0.0) * weights[key]
+        )
+    return data
+
+
+def _render_career_recommendations(
+    profile: career.CareerProfile,
+    scored: pd.DataFrame,
+    city_rank: pd.DataFrame,
+    main_color: str,
+) -> None:
+    """Tab 1：个性化推荐（KPI 卡片 + 摘要 + 匹配度构成 + 明细表 + 逐条建议）。"""
+    top = scored.iloc[0]
+    matched = career.parse_skills(top.get("matched_skills"))
+    industry_skills = career.parse_skills(top.get("skills"))
+    k1, k2, k3, k4, k5 = st.columns(5)
+    with k1:
+        widgets.metric_card(
+            "🎯 首选城市", str(top["city"]),
+            sub=f"{top.get('province', '-')} · {top['industry']}",
+        )
+    with k2:
+        widgets.metric_card(
+            "📊 综合匹配度", f"{float(top['match_score']):.1f}",
+            sub=f"共评估 {len(scored)} 条「城市 × 产业」",
+        )
+    with k3:
+        widgets.metric_card(
+            "💰 预估月薪", f"¥{float(top['avg_salary']):,.0f}",
+            sub=f"期望 ¥{profile.target_salary:,.0f}/月",
+        )
+    with k4:
+        widgets.metric_card(
+            "🧩 技能命中率", f"{float(top['skill_score']):.0f}%",
+            sub=f"命中 {len(matched)} / {len(industry_skills)} 项核心技能",
+        )
+    with k5:
+        widgets.metric_card(
+            "📈 需求景气", f"{float(top['demand_index']):.0f}",
+            sub=f"岗位年增速 {float(top['growth_pct']):+.1f}%",
+        )
+
+    widgets.insight_box(career.build_summary(profile, scored, city_rank))
+
+    chart_col, table_col = st.columns([1, 1.35])
+    with chart_col:
+        st.markdown("#### 📊 匹配度构成（各维度加权贡献）")
+        top_rows = scored.head(int(profile.top_n))
+        contributions = _career_contributions(profile, top_rows)
+        columns = tuple(f"w_{column}" for _key, column, _label in CONTRIBUTION_DIMS)
+        labels = tuple(label for _key, _column, label in CONTRIBUTION_DIMS)
+        render_fig(
+            charts.career_score_breakdown(
+                contributions,
+                columns=columns,
+                labels=labels,
+                label_col="推荐项",
+                title="推荐项匹配度构成（加权得分）",
+                figsize=(6.6, max(3.6, len(contributions) * 0.42 + 2)),
+            )
+        )
+        st.caption("条形总长 ≈ 匹配度（未含学历修正项），每段代表一个维度的加权得分。")
+
+    with table_col:
+        st.markdown(f"#### 📋 推荐明细 TOP {len(top_rows)}")
+        detail = top_rows[
+            ["city", "province", "industry", "category", "avg_salary",
+             "demand_index", "growth_pct", "share_pct", "education",
+             "skills", "match_score"]
+        ].copy()
+        detail.columns = [
+            "城市", "省份", "支柱产业", "行业大类", "平均月薪(元)",
+            "需求景气指数", "岗位年增速(%)", "就业占比(%)", "学历门槛",
+            "核心技能", "匹配度",
+        ]
+        detail.index = range(1, len(detail) + 1)
+        st.dataframe(
+            widgets.fmt_table(
+                detail, INDUSTRY_TABLE_FORMAT,
+                gradient_col="匹配度", cmap="RdYlGn",
+            ),
+            height=380,
+        )
+        st.download_button(
+            "⬇️ 下载推荐结果（CSV）",
+            data=top_rows.rename(
+                columns={c: COLUMN_LABELS.get(c, c) for c in top_rows.columns}
+            ).to_csv(index=False).encode("utf-8-sig"),
+            file_name="就业推荐结果.csv",
+            mime="text/csv",
+        )
+
+    advice_rows = scored.head(min(5, len(scored)))
+    with st.expander(f"📝 逐条推荐理由与提升建议（TOP {len(advice_rows)}）", expanded=False):
+        for rank, (_idx, row) in enumerate(advice_rows.iterrows(), start=1):
+            st.markdown(
+                f"**{rank}. {row['city']} · {row['industry']}**"
+                f"（{row['category']}｜匹配度 {float(row['match_score']):.1f}）  \n"
+                f"{career.build_advice(profile, row)}"
+            )
+
+
+# 城市级推荐表列名 / 格式映射
+CITY_RANK_LABELS: dict[str, str] = {
+    "city": "城市", "province": "省份", "best_industry": "代表产业",
+    "best_category": "行业大类", "match_score": "匹配度",
+    "matched_industries": "匹配产业数", "avg_salary": "平均月薪(元)",
+    "category_mix": "覆盖行业大类", "happiness": "幸福度",
+    "house_price": "房价(元/㎡)", "value_index": "可负担指数",
+    "composite_score": "综合宜居分",
+}
+CITY_RANK_FORMAT: dict[str, str] = {
+    "匹配度": "{:.1f}", "匹配产业数": "{:,.0f}", "平均月薪(元)": "{:,.0f}",
+    "幸福度": "{:.1f}", "房价(元/㎡)": "{:,.0f}", "可负担指数": "{:.2f}",
+    "综合宜居分": "{:.1f}",
+}
+# 行业大类汇总表列名 / 格式映射
+CATEGORY_LABELS: dict[str, str] = {
+    "category": "行业大类", "city_count": "覆盖城市数",
+    "industry_count": "产业数", "avg_salary": "平均月薪(元)",
+    "avg_demand": "需求景气指数", "avg_share": "就业占比(%)",
+    "avg_match": "平均匹配度",
+}
+CATEGORY_FORMAT: dict[str, str] = {
+    "覆盖城市数": "{:,.0f}", "产业数": "{:,.0f}", "平均月薪(元)": "{:,.0f}",
+    "需求景气指数": "{:.1f}", "就业占比(%)": "{:.1f}", "平均匹配度": "{:.1f}",
+}
+# 技能需求表列名 / 格式映射
+SKILL_LABELS: dict[str, str] = {
+    "skill": "技能", "industry_count": "覆盖产业数", "city_count": "覆盖城市数",
+    "avg_demand": "平均需求景气", "avg_salary": "平均月薪(元)",
+    "demand_heat": "需求热度", "sample_categories": "典型行业",
+}
+SKILL_FORMAT: dict[str, str] = {
+    "覆盖产业数": "{:,.0f}", "覆盖城市数": "{:,.0f}",
+    "平均需求景气": "{:.1f}", "平均月薪(元)": "{:,.0f}", "需求热度": "{:.1f}",
+}
+
+
+def _render_career_city_panorama(
+    profile: career.CareerProfile,
+    scored: pd.DataFrame,
+    city_rank: pd.DataFrame,
+    industry_df: pd.DataFrame,
+    main_color: str,
+    province_map: dict[str, str],
+) -> None:
+    """Tab 2：城市产业全景（城市级推荐 + 薪资×需求散点 + 行业大类概览）。"""
+    st.markdown("#### 🏙️ 城市级推荐（每城取匹配度最高的代表产业）")
+    if city_rank.empty:
+        st.info("暂无可聚合的城市级推荐结果。")
+    else:
+        city_display = city_rank.rename(columns=CITY_RANK_LABELS).copy()
+        city_display.index = range(1, len(city_display) + 1)
+        st.dataframe(
+            widgets.fmt_table(
+                city_display, CITY_RANK_FORMAT,
+                gradient_col="匹配度", cmap="RdYlGn",
+            ),
+            height=340,
+        )
+        st.caption(
+            "「覆盖行业大类」为该城市在候选范围内命中的行业大类（最多展示 3 个），"
+            "覆盖越宽说明产业面越广、可选择的岗位越多。"
+        )
+
+    plot_col, cat_col = st.columns([1.15, 1])
+    with plot_col:
+        st.markdown("#### 🎯 候选产业「薪资 × 需求」分布")
+        plot_df = scored.copy()
+        highlight_idx = set(scored.head(int(profile.top_n)).index)
+        plot_df["推荐命中"] = [
+            "推荐" if idx in highlight_idx else "" for idx in plot_df.index
+        ]
+        render_fig(
+            charts.salary_demand_scatter(
+                plot_df,
+                color=main_color,
+                highlight_col="推荐命中",
+                title=f"候选产业薪资 × 需求景气（高亮 = TOP {int(profile.top_n)} 推荐）",
+            )
+        )
+        st.caption("气泡大小 = 该产业就业占比；越靠右上代表「高薪 + 高需求」。")
+
+    with cat_col:
+        st.markdown("#### 🧭 行业大类概览")
+        summary = career.category_summary(scored)
+        if summary.empty:
+            st.info("暂无可聚合的行业大类数据。")
+        else:
+            summary_display = summary.rename(columns=CATEGORY_LABELS).copy()
+            summary_display.index = range(1, len(summary_display) + 1)
+            st.dataframe(
+                widgets.fmt_table(
+                    summary_display, CATEGORY_FORMAT,
+                    gradient_col="平均月薪(元)", cmap="YlOrRd",
+                ),
+                height=340,
+            )
+
+    st.markdown("#### 🔎 单行业大类的城市横向对比")
+    categories = sorted(scored["category"].astype(str).unique())
+    picked = st.selectbox(
+        "选择行业大类查看城市排名", options=categories, key="career_panorama_category"
+    )
+    subset = (
+        scored[scored["category"].astype(str) == picked]
+        .nlargest(min(15, len(scored)), "match_score")
+        .sort_values("match_score")
+    )
+    if subset.empty:
+        st.info("该行业大类的候选数据不足。")
+    else:
+        render_fig(
+            charts.barh_ranking(
+                subset, "match_score",
+                label_col="city",
+                color=main_color,
+                title=f"{picked} · 匹配度 TOP {len(subset)} 城市",
+                xlabel="匹配度（0-100）",
+                fmt="{:.1f}",
+            )
+        )
+    provinces = sorted({province_map.get(city, "-") for city in scored["city"].unique()})
+    st.caption(
+        f"候选范围覆盖 {len(provinces)} 个省级行政区："
+        + "、".join(provinces[:8]) + ("……" if len(provinces) > 8 else "")
+        + f"；支柱产业库共覆盖 {int(industry_df['city'].nunique())} 个城市。"
+    )
+
+
+def _render_career_skill_map(
+    profile: career.CareerProfile,
+    industry_df: pd.DataFrame,
+    main_color: str,
+) -> None:
+    """Tab 3：技能需求图谱与供需缺口分析。"""
+    gap = career.skill_gap_analysis(profile, industry_df, top_n=12)
+    owned, missing = gap["matched"], gap["gaps"]
+    combined = pd.concat(
+        [owned.assign(owned=True), missing.assign(owned=False)], ignore_index=True
+    ).sort_values("demand_heat", ascending=False).head(15)
+
+    if combined.empty:
+        st.info("暂无技能需求数据（支柱产业表缺少技能字段）。")
+        return
+
+    st.markdown("#### 🧩 全市场技能需求热度（绿色 = 你已具备）")
+    chart_col, table_col = st.columns([1.25, 1])
+    with chart_col:
+        render_fig(
+            charts.skill_demand_chart(
+                combined, color=main_color, title="技能需求热度 TOP 15"
+            )
+        )
+        st.caption(
+            "需求热度 = 覆盖产业数 × 平均需求景气指数 ÷ 100，"
+            "综合反映技能的「市场广度」与「紧缺程度」。"
+        )
+
+    with table_col:
+        st.markdown(f"##### ✅ 已具备的高需求技能（{len(owned)} 项）")
+        if owned.empty:
+            st.caption("所选技能暂未进入全市场高需求榜，可参考下方建议补强项。")
+        else:
+            view = owned.rename(columns=SKILL_LABELS).copy()
+            view.index = range(1, len(view) + 1)
+            st.dataframe(
+                widgets.fmt_table(
+                    view, SKILL_FORMAT, gradient_col="需求热度", cmap="Greens"
+                ),
+                height=210,
+            )
+
+        st.markdown(f"##### 📚 建议补强的技能（{len(missing)} 项）")
+        if missing.empty:
+            st.caption("你已覆盖全部高需求技能，属于稀缺复合型人才。")
+        else:
+            view = missing.rename(columns=SKILL_LABELS).copy()
+            view.index = range(1, len(view) + 1)
+            st.dataframe(
+                widgets.fmt_table(
+                    view, SKILL_FORMAT, gradient_col="需求热度", cmap="Oranges"
+                ),
+                height=210,
+            )
+
+    st.download_button(
+        "⬇️ 下载技能需求榜（CSV）",
+        data=(
+            combined.assign(是否具备=combined["owned"])
+            .drop(columns=["owned"])
+            .rename(columns=SKILL_LABELS)
+            .to_csv(index=False)
+            .encode("utf-8-sig")
+        ),
+        file_name="技能需求热度榜.csv",
+        mime="text/csv",
+    )
+    st.caption(
+        "提示：优先补强「需求热度高 + 平均月薪高」的技能，"
+        "对提升匹配度与薪资议价能力的效果最明显。"
+    )
+
+
 def render_province_aggregate(
     filtered_df: pd.DataFrame, main_color: str
 ) -> pd.DataFrame:
@@ -998,6 +1500,7 @@ def render_data_browser(
     province_agg: pd.DataFrame,
     quality: dict,
     metadata: dict,
+    industry_df: pd.DataFrame | None = None,
 ) -> None:
     """第十节：完整数据浏览与数据质量报告。"""
     widgets.section_title("📋 完整数据浏览")
@@ -1071,6 +1574,55 @@ def render_data_browser(
 
     with tab3:
         render_quality_report(quality, metadata)
+        _render_industry_quality(industry_df)
+
+
+def _render_industry_quality(industry_df: pd.DataFrame | None) -> None:
+    """数据质量报告 Tab 内：支柱产业数据集（爬虫采集）概览与导出。"""
+    if industry_df is None or industry_df.empty:
+        st.info(
+            "未找到支柱产业数据集（`data/industry.csv`）；"
+            "运行 `python scripts/crawl_industry.py` 后即可在此查看。"
+        )
+        return
+
+    st.markdown("#### 🏭 支柱产业数据集（爬虫采集）")
+    skills = {
+        tag
+        for value in industry_df["skills"]
+        for tag in str(value).split("|")
+        if tag
+    }
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("记录数（城市 × 产业）", len(industry_df))
+    c2.metric("覆盖城市", int(industry_df["city"].nunique()))
+    c3.metric("行业大类", int(industry_df["category"].nunique()))
+    c4.metric("技能标签", len(skills))
+
+    preview = industry_df.rename(
+        columns={c: COLUMN_LABELS.get(c, c) for c in industry_df.columns}
+    ).copy()
+    preview.index = range(1, len(preview) + 1)
+    st.dataframe(
+        widgets.fmt_table(
+            preview.head(100),
+            {"就业占比(%)": "{:.1f}", "平均月薪(元)": "{:,.0f}",
+             "需求景气指数": "{:.1f}", "岗位年增速(%)": "{:+.1f}"},
+            gradient_col="平均月薪(元)",
+            cmap="YlOrRd",
+        ),
+        height=360,
+    )
+    st.caption(
+        "数据来源：`scripts/crawl_industry.py`（离线页面快照 → 礼貌抓取 → 表格解析 → 清洗落库）；"
+        "字段口径见 `data/metadata.json` 的 industry.csv 条目。"
+    )
+    st.download_button(
+        "📥 下载支柱产业数据（CSV）",
+        data=preview.to_csv(index=False).encode("utf-8-sig"),
+        file_name="中国城市支柱产业与人才需求数据.csv",
+        mime="text/csv",
+    )
 
 # ===========================================================================
 # 主流程：数据加载 → 侧边栏筛选 → KPI 概览 → 各章节渲染
@@ -1084,6 +1636,11 @@ except FileNotFoundError as exc:
     st.error(f"❌ 数据文件缺失：{exc}")
     st.info("请确保 data/ 目录包含全部数据文件（清单见 data/metadata.json）。")
     st.stop()
+
+# 支柱产业（就业）数据集：可选加载，缺失时就业指导章节自动降级提示
+industry_df = data_loader.load_industry_cached(
+    DATA_DIR, data_loader.data_signature(DATA_DIR, data_loader.OPTIONAL_FILES)
+)
 
 # ---------------- 侧边栏：分析控制面板 ----------------
 with st.sidebar:
@@ -1182,13 +1739,14 @@ render_happiness_ranking(filtered_df, main_color)
 render_affordability(filtered_df, main_color)
 render_top20(filtered_df)
 render_outliers(filtered_df, main_color)
+render_career_guidance(filtered_df, industry_df, main_color, province_map)
 province_agg = render_province_aggregate(filtered_df, main_color)
 if show_maps:
     render_maps()
 
 # ---------------- 完整数据浏览与数据质量报告 ----------------
 metadata = data_loader.load_metadata(DATA_DIR)
-render_data_browser(filtered_df, province_agg, quality, metadata)
+render_data_browser(filtered_df, province_agg, quality, metadata, industry_df)
 
 # ---------------- 页脚 ----------------
 widgets.render_footer()

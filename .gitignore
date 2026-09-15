@@ -8,6 +8,9 @@ __pycache__/
 htmlcov/
 .ipynb_checkpoints/
 
+# 爬虫响应缓存（可随时重建，不入库）
+data/crawl_cache/
+
 # 环境与密钥
 .env
 .env.local

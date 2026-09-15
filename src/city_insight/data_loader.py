@@ -17,7 +17,15 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from .config import DATA_DIR, NUMERIC_COLS, DERIVED_COLS, DATA_REF_YEAR
+from .config import (
+    DATA_DIR,
+    DATA_REF_YEAR,
+    DERIVED_COLS,
+    INDUSTRY_COLS,
+    INDUSTRY_FILE,
+    INDUSTRY_NUMERIC_COLS,
+    NUMERIC_COLS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +38,9 @@ REQUIRED_FILES: tuple[str, ...] = (
     "location.csv",
     "population.csv",
 )
+
+# 可选数据集（缺失时主流程照常运行，对应功能自动降级）
+OPTIONAL_FILES: tuple[str, ...] = (INDUSTRY_FILE,)
 
 # 综合宜居评分权重：幸福度 + 可负担指数
 COMPOSITE_WEIGHTS: dict[str, float] = {"happiness": 0.6, "value_index": 0.4}
@@ -212,3 +223,49 @@ def load_metadata(data_dir: Path = DATA_DIR) -> dict[str, Any]:
     import json
 
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_industry(data_dir: Path = DATA_DIR) -> pd.DataFrame:
+    """加载支柱产业长表（可选数据集，纯函数）。
+
+    与主数据的区别：该表是「城市 × 支柱产业」长表（一个城市多行），
+    因此不能按 city 去重，也不能直接并入城市宽表。
+
+    Returns:
+        规范化长表（列为 config.INDUSTRY_COLS 中实际存在的列）；
+        文件不存在时返回带完整列名的空表，调用方据此降级提示。
+    """
+    path = data_dir / INDUSTRY_FILE
+    if not path.exists():
+        logger.warning("未找到支柱产业数据文件 %s，就业指导功能将降级。", path)
+        return pd.DataFrame(columns=list(INDUSTRY_COLS))
+
+    frame = pd.read_csv(path)
+    frame.columns = [str(c).strip() for c in frame.columns]
+    for col in ("city", "industry", "category", "education", "skills"):
+        if col in frame.columns:
+            frame[col] = frame[col].astype("string").fillna("").str.strip()
+    for col in INDUSTRY_NUMERIC_COLS:
+        if col in frame.columns:
+            frame[col] = pd.to_numeric(frame[col], errors="coerce")
+
+    keep = [col for col in INDUSTRY_COLS if col in frame.columns]
+    frame = frame[keep]
+    if {"city", "industry"} <= set(frame.columns):
+        frame = frame[(frame["city"] != "") & (frame["industry"] != "")]
+    logger.info("支柱产业数据加载完成：%d 条记录（%s）", len(frame), path.name)
+    return frame.reset_index(drop=True)
+
+
+@st.cache_data(show_spinner=False)
+def load_industry_cached(
+    data_dir: Path = DATA_DIR,
+    signature: tuple[tuple[str, int, int], ...] | None = None,
+) -> pd.DataFrame:
+    """带缓存的支柱产业数据加载入口（Streamlit 专用）。
+
+    Args:
+        signature: 由 data_signature(data_dir, OPTIONAL_FILES) 生成，仅用于构成
+                   缓存键；爬虫重新生成 industry.csv 后签名变化、缓存自动失效。
+    """
+    return load_industry(data_dir)

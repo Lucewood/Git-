@@ -1,7 +1,7 @@
 {
   "project": "中国城市生活成本与幸福感分析可视化",
-  "version": "2.2.0",
-  "description": "全国 248 个地级及以上城市的幸福度、收入、房价、人口与地理坐标数据；另附 2005-2024 年房价历史序列（结构化演示口径：全国宏观周期 + 城市动量偏离），用于房价趋势分析与机器学习预测（expanding walk-forward 训练与验证）。",
+  "version": "2.3.0",
+  "description": "全国 248 个地级及以上城市的幸福度、收入、房价、人口与地理坐标数据；另附 2005-2024 年房价历史序列（结构化演示口径：全国宏观周期 + 城市动量偏离），用于房价趋势分析与机器学习预测（expanding walk-forward 训练与验证）；以及由爬虫管道（scripts/crawl_industry.py）采集的城市支柱产业与人才需求数据（792 条「城市 × 支柱产业」记录，含就业占比 / 平均月薪 / 需求景气指数 / 岗位年增速 / 学历门槛 / 核心技能），支撑「就业指导与产业推荐」功能。",
   "reference_year": 2024,
   "data_scope": "中国大陆 31 个省级行政区 + 港澳台，共 248 个城市（含直辖市 / 省会 / 地级市）。",
   "unit_note": "收入为年收入（元）；房价为每平米均价（元/㎡）；人口为常住人口（万人）；幸福度为指数（0-100）。",
@@ -46,6 +46,22 @@
       "rows": 248,
       "source": "地理坐标公开资料"
     },
+    "industry.csv": {
+      "description": "城市支柱产业与人才需求（长表：城市 × 支柱产业，共 792 行），由爬虫管道采集：scripts/crawl_industry.py 先生成 8 个区域统计快报 HTML 页面快照（data/raw/industry/），再用 city_insight.crawler 的礼貌抓取器（UA 标识 / robots 准入 / 限速 / 重试 / 磁盘缓存）抓取并解析、清洗后写出。",
+      "columns": {
+        "city": "城市名称",
+        "industry": "支柱产业名录",
+        "category": "行业大类（16 类，见 city_insight/industry_kb.py）",
+        "share_pct": "该产业从业人员占城镇就业比重（%，演示口径）",
+        "avg_salary": "该产业岗位中位月薪（元/月，按城市收入水平缩放）",
+        "demand_index": "人才需求景气指数（0-100，越高越紧缺）",
+        "growth_pct": "岗位数量年均变化（%）",
+        "education": "典型学历门槛",
+        "skills": "核心技能标签（以 | 分隔，取自行业知识库）"
+      },
+      "rows": 792,
+      "source": "公开城市产业结构介绍 + 行业薪资基准的演示口径合成数据（非官方统计）；抓取流程与解析规则见 scripts/crawl_industry.py"
+    },
     "population.csv": {
       "description": "城市常住人口",
       "columns": { "city": "城市名称", "population": "常住人口（万人）" },
@@ -56,6 +72,7 @@
   "regeneration": {
     "population": "python scripts/generate_population.py",
     "house_history": "python scripts/generate_house_price_history.py",
-    "maps": "python scripts/generate_maps.py"
+    "maps": "python scripts/generate_maps.py",
+    "industry": "python scripts/crawl_industry.py（快照 + 爬取）| python scripts/crawl_industry.py --mode crawl --no-network（仅爬取）"
   }
 }

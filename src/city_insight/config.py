@@ -13,12 +13,15 @@ BASE_DIR: Path = Path(__file__).resolve().parent.parent.parent
 DATA_DIR: Path = BASE_DIR / "data"
 NOTEBOOKS_DIR: Path = BASE_DIR / "notebooks"  # pyecharts 生成的 HTML 地图
 LOG_DIR: Path = BASE_DIR / "logs"
+RAW_DIR: Path = DATA_DIR / "raw"                                # 爬虫原始页面快照
+INDUSTRY_SNAPSHOT_DIR: Path = RAW_DIR / "industry"              # 支柱产业页面快照
+CRAWL_CACHE_DIR: Path = DATA_DIR / "crawl_cache"                # 爬虫响应缓存
 
 # ---------------------------------------------------------------------------
 # 数据常量
 # ---------------------------------------------------------------------------
 APP_NAME = "中国城市生活成本与幸福感分析"
-APP_VERSION = "2.2.0"
+APP_VERSION = "2.3.0"
 # 数据参考年份（各字段口径与来源说明见 data/metadata.json）
 DATA_REF_YEAR = 2024
 
@@ -28,6 +31,19 @@ NUMERIC_COLS: tuple[str, ...] = ("happiness", "income", "house_price", "populati
 DERIVED_COLS: tuple[str, ...] = ("value_index", "composite_score")
 # 参与分析的全部指标列
 METRIC_COLS: tuple[str, ...] = NUMERIC_COLS + DERIVED_COLS
+
+# 支柱产业（就业）数据集：文件名、长表列与数值列
+# 该文件由 scripts/crawl_industry.py 爬取生成，属可选数据集（缺失时页面自动降级）
+INDUSTRY_FILE = "industry.csv"
+INDUSTRY_COLS: tuple[str, ...] = (
+    "city", "industry", "category", "share_pct",
+    "avg_salary", "demand_index", "growth_pct", "education", "skills",
+)
+INDUSTRY_NUMERIC_COLS: tuple[str, ...] = (
+    "share_pct", "avg_salary", "demand_index", "growth_pct",
+)
+# 技能标签分隔符（CSV 中以该字符连接多个技能）
+SKILL_SEPARATOR = "|"
 
 # 表格展示中文列名
 COLUMN_LABELS: dict[str, str] = {
@@ -39,6 +55,15 @@ COLUMN_LABELS: dict[str, str] = {
     "population": "常住人口(万)",
     "value_index": "可负担指数",
     "composite_score": "综合宜居分",
+    # 支柱产业（就业）数据集
+    "industry": "支柱产业",
+    "category": "行业大类",
+    "share_pct": "就业占比(%)",
+    "avg_salary": "平均月薪(元)",
+    "demand_index": "需求景气指数",
+    "growth_pct": "岗位年增速(%)",
+    "education": "学历门槛",
+    "skills": "核心技能",
 }
 
 # 指标单位（用于图表轴标签与说明）
@@ -49,6 +74,10 @@ METRIC_UNITS: dict[str, str] = {
     "population": "常住人口（万人）",
     "value_index": "可负担指数（年收入 ÷ 房价）",
     "composite_score": "综合宜居评分（0-100）",
+    "share_pct": "就业占比（%）",
+    "avg_salary": "平均月薪（元/月）",
+    "demand_index": "人才需求景气指数（0-100）",
+    "growth_pct": "岗位年增速（%）",
 }
 
 # ---------------------------------------------------------------------------
@@ -81,6 +110,13 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
 def _env_bool(name: str, default: bool) -> bool:
     val = os.getenv(name)
     if val is None:
@@ -101,6 +137,10 @@ class Settings:
     max_comparison_cities: int = 8      # 城市对比工具最多可选城市数
     default_map_height: int = 520       # 地图组件高度（px）
     n_boot_regression: int = 100        # seaborn 回归重采样次数（越小渲染越快）
+    career_top_n: int = 10              # 就业推荐默认展示条数
+    max_career_results: int = 30        # 就业推荐最多可展示条数
+    crawl_delay: float = 1.0            # 爬虫同域请求最小间隔（秒）
+    crawl_timeout: float = 10.0         # 爬虫单次请求超时（秒）
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -111,6 +151,10 @@ class Settings:
             max_comparison_cities=_env_int("MAX_COMPARISON_CITIES", 8),
             default_map_height=_env_int("DEFAULT_MAP_HEIGHT", 520),
             n_boot_regression=_env_int("N_BOOT_REGRESSION", 100),
+            career_top_n=_env_int("CAREER_TOP_N", 10),
+            max_career_results=_env_int("MAX_CAREER_RESULTS", 30),
+            crawl_delay=_env_float("CRAWL_DELAY", 1.0),
+            crawl_timeout=_env_float("CRAWL_TIMEOUT", 10.0),
         )
 
 

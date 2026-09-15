@@ -5,6 +5,7 @@
 pytest==9.1.1
 pytest-cov==7.16.0
 
-# 数据管道（地图再生成等）
+# 数据管道（地图再生成 / 支柱产业爬虫）
 pyecharts==2.1.0
 requests==2.34.2
+beautifulsoup4==4.15.0

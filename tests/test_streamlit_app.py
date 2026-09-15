@@ -83,3 +83,62 @@ def test_forecast_section_city_and_horizon_interaction():
     horizon = next(sl for sl in at.slider if "预测年数" in sl.label)
     horizon.set_value(8).run()
     assert not at.exception, f"调整预测年数后抛出了异常: {at.exception}"
+
+
+# ---------------------------------------------------------------------------
+# 就业指导与产业推荐（爬虫数据 + 推荐引擎）
+# ---------------------------------------------------------------------------
+def test_career_section_skills_and_education_interaction():
+    """就业指导区块：切换技能标签 / 学历 / 期望行业大类后页面仍正常。"""
+    at = _build_app()
+    at.run()
+
+    skills = next(ms for ms in at.multiselect if "技能标签" in ms.label)
+    skills.set_value(["Python", "数据分析", "机器学习"]).run()
+    assert not at.exception, f"切换技能标签后抛出了异常: {at.exception}"
+
+    education = next(sb for sb in at.selectbox if sb.label == "最高学历")
+    education.set_value("硕士").run()
+    assert not at.exception, f"切换学历后抛出了异常: {at.exception}"
+
+    category = next(ms for ms in at.multiselect if "期望行业大类" in ms.label)
+    category.set_value(["信息技术"]).run()
+    assert not at.exception, f"限定行业大类后抛出了异常: {at.exception}"
+
+
+def test_career_section_weight_and_cost_preference():
+    """就业指导区块：调整偏好权重与低生活成本开关后页面仍正常。"""
+    at = _build_app()
+    at.run()
+
+    salary_weight = next(sl for sl in at.slider if sl.label == "薪资待遇")
+    salary_weight.set_value(5).run()
+    assert not at.exception, f"调整偏好权重后抛出了异常: {at.exception}"
+
+    toggle = next(tg for tg in at.toggle if "优先考虑低生活成本" in tg.label)
+    toggle.set_value(True).run()
+    assert not at.exception, f"切换低生活成本偏好后抛出了异常: {at.exception}"
+
+
+def test_career_section_empty_skills_is_stable():
+    """清空技能标签后应用仍正常（技能权重自动并入其余维度的分支）。"""
+    at = _build_app()
+    at.run()
+
+    skills = next(ms for ms in at.multiselect if "技能标签" in ms.label)
+    skills.set_value([]).run()
+    assert not at.exception, f"清空技能标签后抛出了异常: {at.exception}"
+
+
+def test_career_section_industry_panorama_selector():
+    """城市产业全景：切换行业大类下拉框后页面仍正常。"""
+    at = _build_app()
+    at.run()
+
+    picker = next(
+        sb for sb in at.selectbox if "选择行业大类查看城市排名" in sb.label
+    )
+    options = list(picker.options)
+    assert options, "行业大类下拉框不应为空"
+    picker.set_value(options[-1]).run()
+    assert not at.exception, f"切换行业大类后抛出了异常: {at.exception}"

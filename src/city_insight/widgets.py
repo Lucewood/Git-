@@ -82,6 +82,7 @@ def render_footer() -> None:
         <div class="footer">
             <p>📊 中国城市生活成本与幸福感分析可视化 | 覆盖全国 248 个城市 · 数据参考年份 {DATA_REF_YEAR}</p>
             <p>💡 可负担指数 = 年收入 ÷ 房价（元/㎡），数值越高代表住房压力越小；综合宜居分为加权标准化评分</p>
+            <p>🧭 就业推荐基于爬虫采集的城市支柱产业数据库，匹配度 = 技能 / 薪资 / 发展 / 规模 / 宜居 五维加权</p>
             <p>Made with ❤️ using Streamlit · Matplotlib · Seaborn · Pandas · v{APP_VERSION}</p>
         </div>
         """,

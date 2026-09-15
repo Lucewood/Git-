@@ -437,3 +437,189 @@ def house_backtest_chart(
     return _finalize(fig)
 
 
+
+# ---------------------------------------------------------------------------
+# 就业指导与支柱产业
+# ---------------------------------------------------------------------------
+def career_score_breakdown(
+    data: pd.DataFrame,
+    *,
+    columns: tuple[str, ...],
+    labels: tuple[str, ...],
+    label_col: str = "city",
+    color_map: dict[str, str] | None = None,
+    title: str = "推荐匹配度构成（加权得分）",
+    xlabel: str = "加权得分（0-100）",
+    figsize: tuple[float, float] | None = None,
+) -> plt.Figure:
+    """推荐匹配度构成：各维度「加权贡献」的水平堆叠条形图。
+
+    Args:
+        data: 需含 label_col 与 columns 中全部维度列，且已按总分降序排列。
+        columns: 维度列名（子得分 0-100，调用方需预先按权重折算为贡献值）。
+        labels: 与 columns 等长的中文图例名。
+        color_map: 维度 → 颜色（缺省使用内置配色）。
+    """
+    palette = color_map or {
+        "skill": "#667eea", "salary": "#f59e0b", "growth": "#2e8b57",
+        "scale": "#8b5cf6", "life": "#ff7f50",
+    }
+    if data.empty:
+        fig, ax = plt.subplots(figsize=(8, 4))
+        ax.text(0.5, 0.5, "无数据可展示", ha="center", va="center", fontsize=12)
+        ax.axis("off")
+        return _finalize(fig)
+
+    order = [str(v) for v in data[label_col]]
+    if figsize is None:
+        figsize = (9, max(3.6, len(order) * 0.42 + 2))
+    fig, ax = plt.subplots(figsize=figsize)
+
+    left = np.zeros(len(data))
+    y_pos = np.arange(len(data))
+    for column, label in zip(columns, labels):
+        values = pd.to_numeric(data[column], errors="coerce").fillna(0.0).to_numpy()
+        ax.barh(
+            y_pos, values, left=left, color=palette.get(column, "#999"),
+            edgecolor="white", linewidth=0.6, label=label,
+        )
+        left += values
+
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(order)
+    ax.invert_yaxis()  # 第一名显示在最上方
+    ax.set_xlabel(xlabel, fontsize=11)
+    ax.set_title(title, fontsize=13, fontweight="bold")
+    ax.grid(axis="x", alpha=0.3, linestyle="--")
+    ax.legend(fontsize=9, loc="lower right", ncol=min(3, max(1, len(columns))))
+    for idx, total in enumerate(left):
+        ax.text(total + 0.6, idx, f"{total:.0f}", va="center", fontsize=9)
+    return _finalize(fig)
+
+
+def salary_demand_scatter(
+    data: pd.DataFrame,
+    *,
+    x: str = "avg_salary",
+    y: str = "demand_index",
+    size_col: str | None = "share_pct",
+    label_col: str = "category",
+    color: str,
+    highlight_col: str | None = None,
+    highlight_color: str = DANGER_COLOR,
+    xlabel: str = "平均月薪（元/月）",
+    ylabel: str = "人才需求景气指数（0-100）",
+    title: str = "支柱产业「薪资 × 需求」分布",
+    figsize: tuple[float, float] = (8.4, 5.4),
+) -> plt.Figure:
+    """支柱产业散点图：横轴薪资、纵轴需求景气、点大小 = 就业占比。
+
+    Args:
+        highlight_col: 若提供，则该列非空（且非空串）的点用高亮色标出，
+            用于标记推荐结果命中的产业。
+    """
+    fig, ax = plt.subplots(figsize=figsize)
+    frame = data.dropna(subset=[x, y]).copy()
+    if frame.empty:
+        ax.text(0.5, 0.5, "无数据可展示", ha="center", va="center", fontsize=12)
+        ax.axis("off")
+        return _finalize(fig)
+
+    if size_col and size_col in frame.columns:
+        sizes = pd.to_numeric(frame[size_col], errors="coerce").fillna(1.0)
+        span = max(float(sizes.max() - sizes.min()), 1e-9)
+        sizes = 30.0 + (sizes - sizes.min()) / span * 260.0
+    else:
+        sizes = pd.Series(60.0, index=frame.index)
+
+    if highlight_col and highlight_col in frame.columns:
+        raw = frame[highlight_col]
+        mask = raw.notna() & (raw.astype(str).str.strip() != "")
+    else:
+        mask = pd.Series(False, index=frame.index)
+
+    for selected, point_color, label, edge, alpha in (
+        (mask, highlight_color, "推荐命中", "black", 0.95),
+        (~mask, color, "其他产业", "white", 0.6),
+    ):
+        sub = frame[selected]
+        if sub.empty:
+            continue
+        ax.scatter(
+            sub[x], sub[y], s=sizes.loc[sub.index], alpha=alpha,
+            color=point_color, edgecolors=edge, linewidth=0.6, label=label,
+        )
+
+    # 标注各行业大类的代表点（每个大类取薪资最高的一个，最多 8 个）
+    if label_col in frame.columns:
+        representatives = (
+            frame.sort_values(x, ascending=False)
+            .drop_duplicates(subset=[label_col])
+            .head(8)
+        )
+        for _, row in representatives.iterrows():
+            ax.annotate(
+                str(row[label_col]), (row[x], row[y]),
+                textcoords="offset points", xytext=(5, 4), fontsize=8, alpha=0.85,
+            )
+
+    ax.set_xlabel(xlabel, fontsize=11)
+    ax.set_ylabel(ylabel, fontsize=11)
+    ax.set_title(title, fontsize=13, fontweight="bold")
+    ax.grid(True, alpha=0.3, linestyle="--")
+    ax.legend(fontsize=9, loc="lower right")
+    return _finalize(fig)
+
+
+def skill_demand_chart(
+    data: pd.DataFrame,
+    *,
+    value_col: str = "demand_heat",
+    label_col: str = "skill",
+    color: str = "#667eea",
+    highlight_label: str = "已具备",
+    highlight_color: str = "#2e8b57",
+    title: str = "技能需求热度榜",
+    xlabel: str = "需求热度（出现产业数 × 平均景气指数 / 100）",
+    fmt: str = "{:.1f}",
+    figsize: tuple[float, float] | None = None,
+) -> plt.Figure:
+    """技能需求热度横向条形图；highlight 列（布尔）标记用户已具备的技能。"""
+    if data.empty:
+        fig, ax = plt.subplots(figsize=(8, 4))
+        ax.text(0.5, 0.5, "无数据可展示", ha="center", va="center", fontsize=12)
+        ax.axis("off")
+        return _finalize(fig)
+
+    ordered = data.sort_values(value_col, ascending=True).reset_index(drop=True)
+    if figsize is None:
+        figsize = (8.4, max(3.6, len(ordered) * 0.34 + 2))
+    fig, ax = plt.subplots(figsize=figsize)
+
+    if "owned" in ordered.columns:
+        owned = ordered["owned"].fillna(False).astype(bool)
+    else:
+        owned = pd.Series(False, index=ordered.index)
+
+    bars = ax.barh(
+        ordered[label_col].astype(str), ordered[value_col],
+        color=[highlight_color if flag else color for flag in owned],
+        edgecolor="white",
+    )
+    width_max = float(pd.to_numeric(ordered[value_col], errors="coerce").max() or 0.0)
+    _add_bar_labels(
+        ax, bars, ordered[value_col], fmt=fmt,
+        offset=width_max * 0.02 if width_max > 0 else 0.1,
+    )
+    ax.set_xlabel(xlabel, fontsize=11)
+    ax.set_title(title, fontsize=13, fontweight="bold")
+    ax.grid(axis="x", alpha=0.3, linestyle="--")
+    if bool(owned.any()):
+        handles = [
+            plt.Rectangle((0, 0), 1, 1, color=highlight_color),
+            plt.Rectangle((0, 0), 1, 1, color=color),
+        ]
+        ax.legend(handles, [highlight_label, "建议补强"], fontsize=9, loc="lower right")
+    return _finalize(fig)
+
+
