@@ -18,6 +18,11 @@
 学历门槛：产业学历要求高于用户学历时按每档 6% 折减（0.94^gap），
 并在结果中显式给出 education_gap 供前端提示「需提升学历」。
 
+健壮性约定：
+- 支柱产业表由爬虫 / 外部 CSV 产出，字段可能不完整；本模块对缺失列统一补位，
+  以「该维度 0 分」降级参与打分，而不是抛出 KeyError 中断整页；
+- 样本不足 / 零方差 / 非法数值均回退中位数或 0 分，保证打分恒可用。
+
 输出全部为普通 DataFrame / 字符串，便于单元测试与前端复用。
 """
 
@@ -57,6 +62,8 @@ SALARY_RATIO_CAP = 1.2
 DEMAND_MIX = (0.6, 0.4)
 # 学历每差一档的匹配度折减系数
 EDUCATION_PENALTY = 0.94
+# 城市级聚合中「覆盖行业大类」最多展示的大类数
+CATEGORY_MIX_LIMIT = 3
 
 # 结果表标准列（供前端与测试引用，避免拼写漂移）
 SCORE_COLUMNS: tuple[str, ...] = (
@@ -113,9 +120,52 @@ class CareerProfile:
         return {key: value / total for key, value in values.items()}
 
 
+def profile_key(profile: CareerProfile) -> tuple[Any, ...]:
+    """把求职画像压缩为可哈希键（供 Streamlit 缓存等场景使用）。
+
+    说明：仅保留参与打分的字段；技能与行业大类均排序后入键——两者顺序都不影响
+    打分结果，归一化后「同一组选项、不同勾选顺序」可命中同一份缓存。
+    """
+    weights = tuple(
+        (key, _safe_float(profile.weights.get(key, 0.0))) for key in WEIGHT_LABELS
+    )
+    return (
+        tuple(sorted(parse_skills(profile.skills))),
+        str(profile.education),
+        _safe_float(profile.target_salary),
+        tuple(sorted(str(item) for item in profile.categories)),
+        weights,
+        bool(profile.prefer_low_cost),
+        int(profile.top_n),
+    )
+
+
+def profile_from_key(key: tuple[Any, ...]) -> CareerProfile:
+    """profile_key() 的逆操作：由缓存键还原求职画像。"""
+    skills, education, target_salary, categories, weights, prefer_low_cost, top_n = key
+    return CareerProfile(
+        skills=tuple(skills),
+        education=str(education),
+        target_salary=float(target_salary),
+        categories=tuple(categories),
+        weights=dict(weights),
+        prefer_low_cost=bool(prefer_low_cost),
+        top_n=int(top_n),
+    )
+
+
 # ---------------------------------------------------------------------------
 # 基础工具（纯函数）
 # ---------------------------------------------------------------------------
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    """把任意输入安全转成 float；非法 / 缺失值回退 default。"""
+    try:
+        number = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+    return number if np.isfinite(number) else default
+
+
 def parse_skills(value: Any) -> tuple[str, ...]:
     """把技能字段（"A|B"、列表、NaN 等）统一解析为去重后的技能元组。"""
     if value is None:
@@ -152,13 +202,25 @@ def _column_or_nan(frame: pd.DataFrame, column: str) -> pd.Series:
     return pd.Series(np.nan, index=frame.index, dtype=float)
 
 
-def skill_match_score(user_skills: Iterable[str], industry_skills: Iterable[str]) -> float:
-    """技能覆盖率：用户技能命中「产业核心技能」的比例（0-1）。"""
-    required = set(parse_skills(industry_skills))
+def _column_or_text(frame: pd.DataFrame, column: str, default: str = "") -> pd.Series:
+    """取文本列；列缺失或为空值时统一回退 default（避免 KeyError / nan 外溢）。"""
+    if column in frame.columns:
+        series = frame[column]
+    else:
+        series = pd.Series(default, index=frame.index, dtype=object)
+    return series.fillna(default).astype(str)
+
+
+def _skill_hit_ratio(required: tuple[str, ...], owned: frozenset[str]) -> float:
+    """技能覆盖率快速路径：required 已解析为技能元组，owned 已归一化为集合。"""
     if not required:
         return 0.0
-    owned = set(parse_skills(user_skills))
-    return len(owned & required) / len(required)
+    return sum(1 for token in required if token in owned) / len(required)
+
+
+def skill_match_score(user_skills: Iterable[str], industry_skills: Iterable[str]) -> float:
+    """技能覆盖率：用户技能命中「产业核心技能」的比例（0-1）。"""
+    return _skill_hit_ratio(parse_skills(industry_skills), frozenset(parse_skills(user_skills)))
 
 
 def salary_score(avg_salary: float | None, target_salary: float | None) -> float:
@@ -173,6 +235,24 @@ def salary_score(avg_salary: float | None, target_salary: float | None) -> float
     if target <= 0:
         target = 1.0
     return float(min(salary / target, SALARY_RATIO_CAP) / SALARY_RATIO_CAP)
+
+
+def salary_score_series(salaries: pd.Series, target_salary: float | None) -> pd.Series:
+    """salary_score() 的向量化实现（逐元素口径完全一致，供批量打分使用）。"""
+    values = pd.to_numeric(salaries, errors="coerce").to_numpy(dtype=float)
+    try:
+        target = float(target_salary)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        target = 0.0
+    if not np.isfinite(target) or target <= 0:
+        target = 1.0
+    if values.size == 0:
+        return pd.Series([], index=salaries.index, dtype=float)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ratio = np.clip(values / target, None, SALARY_RATIO_CAP) / SALARY_RATIO_CAP
+    valid = np.isfinite(values) & (values > 0)
+    scores = np.where(valid, ratio, 0.0)
+    return pd.Series(np.clip(scores, 0.0, 1.0), index=salaries.index, dtype=float)
 
 
 def demand_score(
@@ -200,6 +280,25 @@ def demand_score(
 
     w_demand, w_growth = mix
     return float(w_demand * demand_norm + w_growth * growth_norm)
+
+
+def demand_score_series(
+    demand_index: pd.Series,
+    growth_percentile: pd.Series,
+    *,
+    mix: tuple[float, float] = DEMAND_MIX,
+) -> pd.Series:
+    """demand_score() 的向量化实现（口径一致，供批量打分使用）。"""
+    demand = pd.to_numeric(demand_index, errors="coerce").astype(float)
+    demand = demand.where(np.isfinite(demand), 50.0).fillna(50.0)
+    demand_norm = demand.clip(lower=0.0, upper=100.0) / 100.0
+
+    growth = pd.to_numeric(growth_percentile, errors="coerce").astype(float)
+    growth = growth.where(np.isfinite(growth), 0.5).fillna(0.5)
+    growth_norm = growth.clip(lower=0.0, upper=1.0)
+
+    w_demand, w_growth = mix
+    return (w_demand * demand_norm + w_growth * growth_norm).clip(0.0, 1.0).astype(float)
 
 
 def city_life_score(
@@ -253,9 +352,13 @@ def score_industries(
 
     Returns:
         明细表（列为 SCORE_COLUMNS）；输入为空时返回空表而不抛异常。
+        支柱产业表字段缺失时按「该维度 0 分」降级，不会因缺列抛 KeyError。
     """
     if industry_df is None or industry_df.empty:
         logger.info("支柱产业数据为空，无法生成就业推荐。")
+        return _empty_scores()
+    if "city" not in industry_df.columns:
+        logger.warning("支柱产业数据缺少 city 列，无法生成就业推荐。")
         return _empty_scores()
     if city_df is None or city_df.empty or "city" not in city_df.columns:
         logger.info("城市主数据为空，无法生成就业推荐。")
@@ -267,14 +370,34 @@ def score_industries(
         on="city",
         how="inner",
     )
-    if profile.categories:
-        data = data[data["category"].isin(list(profile.categories))]
     if data.empty:
         logger.info("筛选后无候选产业，未生成推荐。")
         return _empty_scores()
     data = data.reset_index(drop=True)
 
-    # ---- 维度一：技能匹配（覆盖率）----
+    # 字段补位：缺失列以空值 / NaN 兜底，保证外部数据不完整时仍可降级打分
+    missing = [
+        column for column in (CITY_METRIC_COLS + ("industry", "category", "skills"))
+        if column not in data.columns
+    ]
+    if missing:
+        logger.warning("支柱产业数据缺少字段 %s，相关维度将按 0 分参与打分。", sorted(missing))
+    data["industry"] = _column_or_text(data, "industry")
+    data["category"] = _column_or_text(data, "category")
+    data["skills"] = _column_or_text(data, "skills")
+    data["education"] = _column_or_text(data, "education")
+    data["province"] = _column_or_text(data, "province", "—")
+    for column in ("avg_salary", "demand_index", "growth_pct", "share_pct"):
+        data[column] = _column_or_nan(data, column)
+
+    if profile.categories:
+        data = data[data["category"].isin(list(profile.categories))]
+        if data.empty:
+            logger.info("筛选后无候选产业，未生成推荐。")
+            return _empty_scores()
+        data = data.reset_index(drop=True)
+
+    # ---- 维度一：技能匹配（覆盖率；技能列只解析一次，命中数复用）----
     user_skills = profile.skill_set
     industry_skills = data["skills"].map(parse_skills)
     data["matched_skills"] = industry_skills.map(
@@ -284,20 +407,17 @@ def score_industries(
         lambda skills: SKILL_SEPARATOR.join(s for s in skills if s not in user_skills)
     )
     data["skill_score"] = [
-        skill_match_score(user_skills, skills) for skills in industry_skills
+        _skill_hit_ratio(skills, user_skills) for skills in industry_skills
     ]
 
-    # ---- 维度二：薪资满足度 ----
-    data["salary_score"] = [
-        salary_score(value, profile.target_salary) for value in data["avg_salary"]
-    ]
+    # ---- 维度二：薪资满足度（向量化，与 salary_score() 同口径）----
+    data["salary_score"] = salary_score_series(
+        data["avg_salary"], profile.target_salary
+    )
 
-    # ---- 维度三：发展空间（景气指数 + 增速百分位）----
+    # ---- 维度三：发展空间（景气指数 + 增速百分位，向量化同口径）----
     growth_rank = _percentile(data["growth_pct"])
-    data["demand_score"] = [
-        demand_score(demand, growth)
-        for demand, growth in zip(data["demand_index"], growth_rank)
-    ]
+    data["demand_score"] = demand_score_series(data["demand_index"], growth_rank)
 
     # ---- 维度四：岗位规模与生活宜居 ----
     data["scale_score"] = _percentile(data["share_pct"])
@@ -306,10 +426,8 @@ def score_industries(
     )
 
     # ---- 学历门槛修正 ----
-    data["education"] = data.get("education", pd.Series("", index=data.index))
     data["education_gap"] = [
-        education_gap(required, profile.education)
-        for required in data["education"].fillna("")
+        education_gap(required, profile.education) for required in data["education"]
     ]
 
     weights = profile.normalized_weights
@@ -333,7 +451,8 @@ def score_industries(
     data = data.sort_values(
         ["match_score", "avg_salary"], ascending=[False, False]
     ).reset_index(drop=True)
-    return data[list(SCORE_COLUMNS)]
+    # reindex 而非按列索引：即使上游缺列也只会产生 NaN，不会抛 KeyError
+    return data.reindex(columns=list(SCORE_COLUMNS))
 
 
 def rank_cities(
@@ -356,14 +475,32 @@ def rank_cities(
     if scored is None or scored.empty:
         return _empty_cities()
 
-    ordered = scored.sort_values("match_score", ascending=False)
-    best = ordered.groupby("city", as_index=False).first()
-    counts = ordered.groupby("city")["industry"].count().rename("matched_industries")
-    mix = ordered.groupby("city")["category"].apply(
-        lambda series: "、".join(list(dict.fromkeys(series.astype(str)))[:3])
-    ).rename("category_mix")
-    stats = pd.concat([counts, mix], axis=1).reset_index()
+    # 文本列归一化：空值以空串参与分组，避免聚合时 float 触发 join 异常
+    ordered = scored.sort_values("match_score", ascending=False).copy()
+    for column in ("city", "industry", "category"):
+        if column in ordered.columns:
+            ordered[column] = ordered[column].fillna("").astype(str)
 
+    # 每城取匹配度最高的产业为代表（keep="first" 即最优行，语义比 groupby.first 的
+    # 「首个非空值」更明确，且无需执行全列聚合）
+    best = ordered.drop_duplicates(subset=["city"], keep="first")
+
+    # 命中产业数：按行数统计（即便 industry 为空也计入候选数）
+    counts = ordered.groupby("city")["industry"].size().rename("matched_industries")
+
+    # 覆盖行业大类：按匹配度顺序去重后取前 CATEGORY_MIX_LIMIT 个（向量化，避免逐组 apply）
+    categories = ordered.drop_duplicates(subset=["city", "category"])
+    categories = categories.assign(
+        _category_rank=categories.groupby("city").cumcount()
+    )
+    mix = (
+        categories[categories["_category_rank"] < CATEGORY_MIX_LIMIT]
+        .groupby("city")["category"]
+        .agg("、".join)
+        .rename("category_mix")
+    )
+
+    stats = pd.concat([counts, mix], axis=1).reset_index()
     merged = best.merge(stats, on="city", how="left")
     if city_df is not None and not city_df.empty and "city" in city_df.columns:
         # 仅补充尚未存在的指标列（如 province 已随明细带入，避免 merge 产生 _x/_y 后缀）
@@ -380,11 +517,9 @@ def rank_cities(
     merged = merged.rename(
         columns={"industry": "best_industry", "category": "best_category"}
     )
-    for col in CITY_COLUMNS:
-        if col not in merged.columns:
-            merged[col] = np.nan
+    # 用 reindex 一次性补齐缺失列（缺列补 NaN，不会抛 KeyError）
     return (
-        merged[list(CITY_COLUMNS)]
+        merged.reindex(columns=list(CITY_COLUMNS))
         .sort_values("match_score", ascending=False)
         .head(max(1, int(top_n)))
         .reset_index(drop=True)
@@ -529,6 +664,7 @@ def build_advice(profile: CareerProfile, row: Mapping[str, Any]) -> str:
     category = str(row.get("category", ""))
     matched = parse_skills(row.get("matched_skills"))
     missing = parse_skills(row.get("missing_skills"))
+    occupations = str(row.get("occupations", "") or "").strip()
     try:
         gap = int(float(row.get("education_gap", 0) or 0))
     except (TypeError, ValueError):
@@ -539,9 +675,11 @@ def build_advice(profile: CareerProfile, row: Mapping[str, Any]) -> str:
         score = 0.0
 
     parts = [
-        f"{city}的{industry}（{category}）匹配度 {score:.1f} 分，"
+        f"{city}的{industry}（{category}）匹配度 {_fmt_metric(score)} 分，"
         f"平均月薪约 {_fmt_salary(row.get('avg_salary'))}。"
     ]
+    if occupations:
+        parts.append(f"可投递的典型岗位方向：{occupations}；")
     if matched:
         parts.append(f"你的 {'、'.join(matched)} 与该产业核心技能吻合；")
     if missing:
@@ -575,7 +713,7 @@ def build_summary(
 
     top = scored.iloc[0]
     best_city = city_rank.iloc[0] if city_rank is not None and not city_rank.empty else None
-    skill_hit = float(top.get("skill_score", 0.0))
+    skill_hit = _safe_float(top.get("skill_score", 0.0))
     weight_text = " / ".join(
         f"{WEIGHT_LABELS[key]} {value:.0%}"
         for key, value in profile.normalized_weights.items()
@@ -585,11 +723,11 @@ def build_summary(
         f"期望月薪 {profile.target_salary:,.0f} 元 · 技能 {len(profile.skill_set)} 项 · "
         f"偏好权重 {weight_text}。<br>",
         f"<strong>🎯 首选推荐：</strong>{top['city']} · {top['industry']}"
-        f"（{top['category']}），匹配度 <strong>{float(top['match_score']):.1f}</strong> 分，"
+        f"（{top['category']}），匹配度 <strong>{_fmt_metric(top['match_score'])}</strong> 分，"
         f"平均月薪约 {_fmt_salary(top['avg_salary'])}，"
-        f"人才需求景气指数 {float(top['demand_index']):.0f}、"
-        f"岗位年增速 {float(top['growth_pct']):+.1f}%。<br>",
-        f"<strong>🧩 技能命中率：</strong>{skill_hit:.0f}%（"
+        f"人才需求景气指数 {_fmt_metric(top['demand_index'], '{:.0f}')}、"
+        f"岗位年增速 {_fmt_metric(top['growth_pct'], '{:+.1f}%')}。<br>",
+        f"<strong>🧩 技能命中率：</strong>{_fmt_metric(skill_hit, '{:.0f}')}%（"
         + (
             f"已命中 {'、'.join(parse_skills(top['matched_skills']))}；"
             if parse_skills(top["matched_skills"])

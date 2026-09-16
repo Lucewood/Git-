@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -199,6 +200,9 @@ def test_advice_and_summary_text(industry_df, city_df):
     assert scored.iloc[0]["city"] in advice
     assert "匹配度" in advice
     assert "学历" in advice
+    # 典型岗位方向应来自 industry_kb 的岗位口径
+    assert "典型岗位方向" in advice
+    assert "软件开发工程师" in advice
 
     summary = build_summary(profile, scored, rank_cities(scored, top_n=3))
     assert "首选推荐" in summary
@@ -206,3 +210,101 @@ def test_advice_and_summary_text(industry_df, city_df):
     assert build_summary(profile, pd.DataFrame(), pd.DataFrame()).startswith(
         "<strong>🧭 暂无推荐结果"
     )
+
+
+# ---------------------------------------------------------------------------
+# 健壮性 / 缓存键 / 向量化实现等价性（回归）
+# ---------------------------------------------------------------------------
+def test_score_industries_tolerates_missing_columns(industry_df, city_df):
+    """支柱产业表缺列时应降级打分而非抛 KeyError（爬虫产出可能字段不全）。"""
+    profile = CareerProfile(skills=("Python",), education="本科", target_salary=12000)
+    for column in career.SCORE_COLUMNS:
+        if column in ("city",):
+            continue  # city 为连接键，缺失时返回空表
+        subset = industry_df.drop(columns=[column], errors="ignore")
+        scored = score_industries(profile, subset, city_df)
+        assert list(scored.columns) == list(career.SCORE_COLUMNS), column
+        assert scored["match_score"].between(0, 100).all(), column
+
+    # 城市主数据缺 province 时不应崩溃，且列仍完整
+    without_province = score_industries(profile, industry_df, city_df.drop(columns=["province"]))
+    assert list(without_province.columns) == list(career.SCORE_COLUMNS)
+
+    # 缺 city 列（无法连接）应返回空表
+    assert score_industries(profile, industry_df.drop(columns=["city"]), city_df).empty
+
+
+def test_vectorized_scores_match_scalar_reference():
+    """向量化薪资 / 发展空间得分应与标量参考实现逐元素一致。"""
+    salaries = pd.Series([0.0, 6000.0, 12000.0, 20000.0, 99999.0, np.nan])
+    series = career.salary_score_series(salaries, 12000)
+    expected = [salary_score(v, 12000) for v in salaries]
+    assert np.allclose(series.to_numpy(), expected)
+
+    demand = pd.Series([85.0, 0.0, 120.0, np.nan, -10.0])
+    growth = pd.Series([0.9, 0.1, 0.5, np.nan, 1.4])
+    got = career.demand_score_series(demand, growth)
+    expected_demand = [
+        demand_score(d, g) for d, g in zip(demand, growth.fillna(0.5))
+    ]
+    assert np.allclose(got.to_numpy(), expected_demand)
+
+
+def test_profile_key_is_hashable_and_order_insensitive():
+    """画像缓存键应可哈希、与行业大类勾选顺序无关，且能还原出等价画像。"""
+    profile = CareerProfile(
+        skills=("数据分析", "Python", "Python"),
+        education="本科",
+        target_salary=12000.0,
+        categories=("信息技术", "金融商务"),
+        weights={"skill": 3, "salary": 2.5, "growth": 2, "scale": 1, "life": 1.5},
+        prefer_low_cost=True,
+        top_n=12,
+    )
+    key = career.profile_key(profile)
+    assert hash(key)  # 可哈希（可作缓存键）
+
+    shuffled = CareerProfile(
+        skills=("Python", "数据分析"),
+        education="本科",
+        target_salary=12000.0,
+        categories=("金融商务", "信息技术"),
+        weights=dict(profile.weights),
+        prefer_low_cost=True,
+        top_n=12,
+    )
+    assert career.profile_key(shuffled) == key
+
+    restored = career.profile_from_key(key)
+    assert restored.skill_set == profile.skill_set
+    assert restored.normalized_weights == profile.normalized_weights
+    assert restored.education == profile.education
+    assert restored.top_n == profile.top_n
+    assert restored.prefer_low_cost is True
+
+
+def test_rank_cities_keeps_best_row_per_city(industry_df, city_df):
+    """城市级聚合：每城一行、代表产业取匹配度最高者、命中数按候选行数统计。"""
+    scored = score_industries(
+        CareerProfile(skills=("Python", "数据分析"), target_salary=12000),
+        industry_df, city_df,
+    )
+    ranked = rank_cities(scored, top_n=10, city_df=city_df)
+    assert ranked["city"].is_unique
+    best = scored.sort_values("match_score", ascending=False).drop_duplicates("city")
+    for _idx, row in ranked.iterrows():
+        candidate = best[best["city"] == row["city"]].iloc[0]
+        assert row["best_industry"] == candidate["industry"]
+        assert row["match_score"] == candidate["match_score"]
+        assert row["matched_industries"] == int((scored["city"] == row["city"]).sum())
+        assert len(str(row["category_mix"]).split("、")) <= career.CATEGORY_MIX_LIMIT
+
+
+def test_rank_cities_handles_blank_category(industry_df, city_df):
+    """行业大类为空（缺列 / 空值）时聚合不应抛异常。"""
+    scored = score_industries(
+        CareerProfile(skills=("Python",)), industry_df.drop(columns=["category"]), city_df
+    )
+    ranked = rank_cities(scored, top_n=5, city_df=city_df)
+    assert list(ranked.columns) == list(career.CITY_COLUMNS)
+    assert ranked["category_mix"].eq("").all()

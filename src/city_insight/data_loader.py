@@ -231,9 +231,13 @@ def load_industry(data_dir: Path = DATA_DIR) -> pd.DataFrame:
     与主数据的区别：该表是「城市 × 支柱产业」长表（一个城市多行），
     因此不能按 city 去重，也不能直接并入城市宽表。
 
+    健壮性：该文件由爬虫 / 外部数据源产出，字段可能不完整；本函数会把
+    缺失字段按类型补齐（文本 → ""、数值 → NaN），并按 (city, industry) 去重，
+    保证下游打分与展示不会因缺列 / 重复行抛异常。
+
     Returns:
-        规范化长表（列为 config.INDUSTRY_COLS 中实际存在的列）；
-        文件不存在时返回带完整列名的空表，调用方据此降级提示。
+        规范化长表（列固定为 config.INDUSTRY_COLS）；文件不存在时返回全列空表，
+        调用方据此降级提示。
     """
     path = data_dir / INDUSTRY_FILE
     if not path.exists():
@@ -242,19 +246,75 @@ def load_industry(data_dir: Path = DATA_DIR) -> pd.DataFrame:
 
     frame = pd.read_csv(path)
     frame.columns = [str(c).strip() for c in frame.columns]
-    for col in ("city", "industry", "category", "education", "skills"):
-        if col in frame.columns:
-            frame[col] = frame[col].astype("string").fillna("").str.strip()
-    for col in INDUSTRY_NUMERIC_COLS:
-        if col in frame.columns:
-            frame[col] = pd.to_numeric(frame[col], errors="coerce")
+    missing = [col for col in INDUSTRY_COLS if col not in frame.columns]
+    if missing:
+        logger.warning(
+            "支柱产业数据缺少字段 %s，已按空值补齐（对应维度在推荐中按 0 分计入）。",
+            missing,
+        )
 
-    keep = [col for col in INDUSTRY_COLS if col in frame.columns]
-    frame = frame[keep]
-    if {"city", "industry"} <= set(frame.columns):
-        frame = frame[(frame["city"] != "") & (frame["industry"] != "")]
+    for col in INDUSTRY_COLS:
+        if col in INDUSTRY_NUMERIC_COLS:
+            source = frame[col] if col in frame.columns else pd.Series(np.nan, index=frame.index)
+            frame[col] = pd.to_numeric(source, errors="coerce")
+        else:
+            source = frame[col] if col in frame.columns else pd.Series("", index=frame.index)
+            frame[col] = source.astype("string").fillna("").str.strip()
+
+    frame = frame[list(INDUSTRY_COLS)]
+    # 空城市 / 空产业无法参与推荐与聚合，直接剔除；重复「城市 × 产业」保留首条
+    frame = frame[(frame["city"] != "") & (frame["industry"] != "")]
+    frame = frame.drop_duplicates(subset=["city", "industry"], keep="first")
     logger.info("支柱产业数据加载完成：%d 条记录（%s）", len(frame), path.name)
     return frame.reset_index(drop=True)
+
+
+def industry_health(frame: pd.DataFrame | None) -> dict[str, Any]:
+    """检查支柱产业表的字段可用性（纯函数，供前端给出降级原因提示）。
+
+    Returns:
+        {
+          "rows": 记录数, "cities": 覆盖城市数, "categories": 行业大类数,
+          "missing_columns": 完全缺失的字段,
+          "blank_columns": 全为空白的文本字段,
+          "empty_numeric_columns": 全为空值的数值字段,
+        }
+    """
+    if frame is None or frame.empty:
+        return {
+            "rows": 0, "cities": 0, "categories": 0,
+            "missing_columns": list(INDUSTRY_COLS),
+            "blank_columns": [], "empty_numeric_columns": [],
+        }
+
+    missing = [col for col in INDUSTRY_COLS if col not in frame.columns]
+    blank: list[str] = []
+    empty_numeric: list[str] = []
+    for col in INDUSTRY_COLS:
+        if col in missing:
+            continue
+        if col in INDUSTRY_NUMERIC_COLS:
+            values = pd.to_numeric(frame[col], errors="coerce")
+            if not values.notna().any():
+                empty_numeric.append(col)
+        else:
+            values = frame[col].astype("string").fillna("").str.strip()
+            if not values.ne("").any():
+                blank.append(col)
+
+    def _nunique(column: str) -> int:
+        if column not in frame.columns:
+            return 0
+        return int(frame[column].astype("string").fillna("").str.strip().replace("", pd.NA).nunique())
+
+    return {
+        "rows": int(len(frame)),
+        "cities": _nunique("city"),
+        "categories": _nunique("category"),
+        "missing_columns": missing,
+        "blank_columns": blank,
+        "empty_numeric_columns": empty_numeric,
+    }
 
 
 @st.cache_data(show_spinner=False)

@@ -21,7 +21,7 @@ CRAWL_CACHE_DIR: Path = DATA_DIR / "crawl_cache"                # 爬虫响应�
 # 数据常量
 # ---------------------------------------------------------------------------
 APP_NAME = "中国城市生活成本与幸福感分析"
-APP_VERSION = "2.3.0"
+APP_VERSION = "2.4.0"
 # 数据参考年份（各字段口径与来源说明见 data/metadata.json）
 DATA_REF_YEAR = 2024
 

@@ -6,12 +6,14 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from city_insight.config import DATA_DIR
+from city_insight.config import DATA_DIR, INDUSTRY_COLS, INDUSTRY_NUMERIC_COLS
 from city_insight.data_loader import (
     REQUIRED_FILES,
     compute_derived,
     data_signature,
+    industry_health,
     load_and_merge,
+    load_industry,
     validate_data,
 )
 
@@ -78,3 +80,64 @@ def test_validate_data_missing_values():
     assert report["missing_values"]["happiness"] == 1
     assert report["numeric_summary"]["income"]["count"] == 1
     assert report["numeric_summary"]["income"]["mean"] == 1.0
+
+
+# ---------------------------------------------------------------------------
+# 支柱产业（就业）数据集：可选加载、字段补位与健康检查
+# ---------------------------------------------------------------------------
+def _write_industry(data_dir, text: str):
+    path = data_dir / "industry.csv"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_load_industry_missing_file_returns_full_schema(tmp_path):
+    """文件缺失时返回全列空表（调用方据此降级提示），而非抛异常。"""
+    frame = load_industry(tmp_path)
+    assert frame.empty
+    assert list(frame.columns) == list(INDUSTRY_COLS)
+
+
+def test_load_industry_normalizes_schema_and_dedupes(tmp_path):
+    """缺列补位 + 空值清洗 + (城市, 产业) 去重，保证下游不会因字段缺失崩溃。"""
+    _write_industry(
+        tmp_path,
+        "city,industry,avg_salary\n"
+        " A , 软件开发 ,10000\n"     # 首尾空格应被清洗
+        "A,软件开发,99999\n"          # 重复「城市 × 产业」保留首条
+        "B,,\n"                       # 空产业应剔除
+        ",装饰装修,8000\n",           # 空城市应剔除
+    )
+    frame = load_industry(tmp_path)
+    assert list(frame.columns) == list(INDUSTRY_COLS)
+    assert frame["city"].tolist() == ["A"]
+    assert frame["industry"].tolist() == ["软件开发"]
+    assert frame.loc[0, "avg_salary"] == 10000  # 去重保留首条
+    for column in INDUSTRY_NUMERIC_COLS:
+        assert pd.api.types.is_numeric_dtype(frame[column]), column
+    assert not frame.duplicated(subset=["city", "industry"]).any()
+    # 补齐的文本列不应残留 NaN
+    assert frame["skills"].isna().sum() == 0
+
+
+def test_industry_health_flags_degraded_fields(tmp_path):
+    """健康检查应准确报出缺失 / 空白 / 全空数值字段，供前端解释降级原因。"""
+    _write_industry(tmp_path, "city,industry,avg_salary\n甲城,软件开发,10000\n")
+    frame = load_industry(tmp_path)
+    health = industry_health(frame)
+    assert health["rows"] == 1
+    assert health["cities"] == 1
+    assert health["missing_columns"] == []           # 已在加载阶段补齐
+    assert "skills" in health["blank_columns"]        # 文本列全空
+    assert "demand_index" in health["empty_numeric_columns"]
+
+    healthy = industry_health(load_industry(DATA_DIR))
+    assert healthy["rows"] > 0
+    assert healthy["cities"] > 0
+    assert healthy["categories"] > 0
+    assert healthy["missing_columns"] == []
+    assert healthy["blank_columns"] == []
+    assert healthy["empty_numeric_columns"] == []
+    # 空输入不应抛异常
+    assert industry_health(None)["rows"] == 0
+    assert industry_health(pd.DataFrame())["rows"] == 0
