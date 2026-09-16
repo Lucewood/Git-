@@ -1336,7 +1336,8 @@ def _render_career_recommendations(
                 label_col="推荐项",
                 color_map=CONTRIBUTION_COLORS,
                 title="推荐项匹配度构成（加权得分）",
-                figsize=(6.6, max(3.6, len(contributions) * 0.42 + 2)),
+                # 高度补偿：为底部图例空白带预留空间，避免图例压住底部条形
+                figsize=(6.6, max(4.2, len(contributions) * 0.42 + 2.5)),
             )
         )
         st.caption(

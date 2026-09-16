@@ -543,6 +543,109 @@ def _resolve_dim_colors(
     return colors
 
 
+def _measure_sizes(fig: plt.Figure, ax, legend) -> tuple[float, float, float, float]:
+    """量测「图例」与「坐标区」的像素尺寸，返回 (图例宽, 图例高, 坐标区宽, 坐标区高)。
+
+    ``get_window_extent`` 只需 renderer 计算文字度量，无需 ``canvas.draw()``；
+    后者要遍历绘制全部艺术家，展示条数多时耗时显著（实测 47–98 ms vs 4 ms，
+    两者量测结果逐像素一致）。若极端情况下量测结果不可用，退化为绘制一次再量测。
+    """
+
+    def _read() -> tuple[float, float, float, float]:
+        renderer = fig.canvas.get_renderer()
+        legend_box = legend.get_window_extent(renderer)
+        axes_box = ax.get_window_extent(renderer)
+        return legend_box.width, legend_box.height, axes_box.width, axes_box.height
+
+    sizes = _read()
+    if not all(np.isfinite(value) and value > 0 for value in sizes):
+        fig.canvas.draw()
+        sizes = _read()
+    return sizes
+
+
+def _reserve_legend_band(
+    fig: plt.Figure,
+    ax,
+    legend,
+    *,
+    span: float,
+    gap_rows: float = 0.35,
+    passes: int = 2,
+) -> float:
+    """在坐标区底部外扩一条「无条形」的空白带，把图例安置其中。
+
+    匹配度构成图的行数由「展示推荐条数」决定：行数较多时坐标区底部空间不足，
+    固定在右下角的图例会盖住最后几行条形及其数值标签。这里按图例的实测高度
+    （像素，见 ``_measure_sizes``）反推需要预留的数据行数——先以
+    ``set_in_layout(False)`` 让图例不参与布局并量取尺寸，再把 y 轴下界外扩
+    ``pad`` 个数据行；由于「外扩 → 每行像素变矮 → 需要更大外扩」存在轻微反馈，
+    用 ``passes`` 轮迭代收敛。
+
+    预留量以「数据行数」而非像素描述，因此与 dpi / 画布尺寸无关，
+    st.pyplot 以其它 dpi 重绘时空白带仍与图例等高。
+
+    Args:
+        span: 条形占用的数据行跨度（n 行条形时为 ``n - 1``）。
+        gap_rows: 图例与最底部条形之间额外留出的行距（单位：数据行）。
+        passes: 迭代次数（≥1），用于消除外扩带来的轻微反馈。
+
+    Returns:
+        实际预留的数据行数 ``pad``。
+    """
+    y_bottom, y_top = ax.get_ylim()
+    # 已 invert_yaxis：下界数值更大，故外扩方向取 +1，否则取 -1
+    direction = 1.0 if y_bottom > y_top else -1.0
+    pad = 0.0
+    for _ in range(max(1, passes)):
+        legend.set_in_layout(False)
+        _legend_w, legend_height, _axes_w, axes_height = _measure_sizes(fig, ax, legend)
+        rows = span + pad if span + pad > 1e-9 else 1.0
+        px_per_row = axes_height / rows
+        pad = (legend_height + gap_rows * px_per_row) / px_per_row
+        ax.set_ylim(y_bottom + direction * pad, y_top)
+    legend.set_in_layout(True)
+    return pad
+
+
+def _place_legend_in_bottom_band(
+    fig: plt.Figure,
+    ax,
+    *,
+    ncol: int,
+    span: float,
+    fontsize: int = 9,
+    framealpha: float = 0.9,
+):
+    """把图例安置到坐标区底部预留的空白带内（详见 ``_reserve_legend_band``）。
+
+    默认靠右下角放置；若坐标区被较长的刻度标签挤得过窄、图例横向会溢出，
+    则改为铺满整条空白带（``mode="expand"``），保证图例始终完整可见。
+
+    Returns:
+        实际使用的图例对象。
+    """
+    # 先按最终边距布局一次：以下对图例宽高的量测与最终渲染（tight_layout 之后）一致
+    _finalize(fig)
+    legend = ax.legend(
+        fontsize=fontsize, loc="lower right", ncol=ncol, framealpha=framealpha,
+    )
+    _reserve_legend_band(fig, ax, legend, span=span)
+
+    legend.set_in_layout(False)
+    legend_width, _legend_h, axes_width, _axes_h = _measure_sizes(fig, ax, legend)
+    if legend_width > axes_width:
+        # 坐标区被长标签挤得太窄 → 图例改为横向铺满整条空白带
+        legend.remove()
+        legend = ax.legend(
+            fontsize=fontsize, loc="lower left", mode="expand",
+            bbox_to_anchor=(0.0, 0.0, 1.0, 0.0), ncol=ncol, framealpha=framealpha,
+        )
+        _reserve_legend_band(fig, ax, legend, span=span)
+    legend.set_in_layout(True)
+    return legend
+
+
 def career_score_breakdown(
     data: pd.DataFrame,
     *,
@@ -563,6 +666,10 @@ def career_score_breakdown(
         color_map: 维度 → 颜色。键可为列名（``w_skill_score``）、中文图例名
             （``技能匹配``）或维度关键词（``skill``）；未命中的维度按内置
             CAREER_DIM_COLORS / 兜底配色取色，且同一张图内颜色互不相同。
+
+    布局说明：图例固定在坐标区右下角，并在坐标区底部预留一条等高空白带
+    （见 ``_reserve_legend_band``），因此无论展示多少行推荐，图例都不会
+    压住最底部的条形分段与数值标签。
     """
     if data.empty:
         fig, ax = plt.subplots(figsize=(8, 4))
@@ -572,7 +679,8 @@ def career_score_breakdown(
 
     order = [str(v) for v in data[label_col]]
     if figsize is None:
-        figsize = (9, max(3.6, len(order) * 0.42 + 2))
+        # 常量项 +0.5in：为底部图例空白带（由 _reserve_legend_band 预留）补偿高度
+        figsize = (9, max(4.2, len(order) * 0.42 + 2.5))
     fig, ax = plt.subplots(figsize=figsize)
 
     left = np.zeros(len(data))
@@ -596,13 +704,15 @@ def career_score_breakdown(
     ax.set_xlabel(xlabel, fontsize=11)
     ax.set_title(title, fontsize=13, fontweight="bold")
     ax.grid(axis="x", alpha=0.3, linestyle="--")
-    ax.legend(
-        fontsize=9, loc="lower right",
-        ncol=min(3, max(1, len(columns))),
-        framealpha=0.9,  # 半透明底避免遮挡条形，同时保证图例配色可辨
-    )
     for idx, total in enumerate(left):
         ax.text(total + 0.6, idx, f"{total:.0f}", va="center", fontsize=9)
+    # 图例放在坐标区底部预留的空白带内：
+    # 行数较多（展示条数多）时坐标区内空间不足，图例会压住底部条形与数值标签。
+    _place_legend_in_bottom_band(
+        fig, ax,
+        ncol=min(3, max(1, len(columns))),
+        span=float(max(len(data) - 1, 1)),
+    )
     return _finalize(fig)
 
 

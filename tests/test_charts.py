@@ -209,6 +209,88 @@ def test_career_score_breakdown_color_map_override_and_fallback():
     assert len(set(colors)) == len(colors), f"兜底配色不得与其它维度撞色：{colors}"
 
 
+def _legend_overlap_problems(fig, rows: int) -> list[str]:
+    """返回「图例压住条形 / 数值标签」的问题列表（空列表 = 通过）。"""
+    fig.canvas.draw()
+    ax = fig.axes[0]
+    legend = ax.get_legend()
+    assert legend is not None, "匹配度构成图必须带有维度图例"
+    leg_box = legend.get_window_extent()
+
+    def hit(box) -> bool:
+        return (
+            box.x1 > leg_box.x0 and leg_box.x1 > box.x0
+            and box.y1 > leg_box.y0 and leg_box.y1 > box.y0
+        )
+
+    problems = [
+        f"图例压住第 {index % rows + 1} 行条形"
+        for index, patch in enumerate(ax.patches)
+        if hit(patch.get_window_extent())
+    ]
+    problems += [
+        f"图例压住数值标签 {text.get_text()}"
+        for text in ax.texts
+        if hit(text.get_window_extent())
+    ]
+    ax_box = ax.get_window_extent()
+    if not (
+        ax_box.x0 <= leg_box.x0 and ax_box.y0 <= leg_box.y0
+        and leg_box.x1 <= ax_box.x1 and leg_box.y1 <= ax_box.y1
+    ):
+        problems.append("图例越出坐标区")
+    return problems
+
+
+def test_career_score_breakdown_legend_avoids_bottom_bars():
+    """行数较多（展示条数多）时，图例应落在坐标区底部预留的空白带内。
+
+    回归场景：图例原先固定在坐标区右下角，行数一多就会盖住最底部的条形分段
+    与其数值标签（页面「个性化推荐 → 匹配度构成」底部空间不足）。
+    """
+    import pandas as pd
+
+    rows = 12
+    base = _career_frame()
+    data = pd.DataFrame({c: list(base[c]) * 4 for c in base.columns}).head(rows)
+    # 使用较长的推荐项名称：坐标区被刻度标签挤窄时更容易暴露重叠
+    data["industry"] = [f"集成电路设计与制造{i}" for i in range(rows)]
+
+    fig = charts.career_score_breakdown(
+        data,
+        columns=("w_skill_score", "w_salary_score", "w_demand_score",
+                 "w_scale_score", "w_life_score"),
+        labels=("技能匹配", "薪资待遇", "发展空间", "岗位规模", "生活宜居"),
+        label_col="industry",
+        figsize=(6.6, max(4.2, rows * 0.42 + 2.5)),
+    )
+    _assert_fig(fig)
+    assert _legend_overlap_problems(fig, rows) == []
+
+    # 图例必须完整显示全部维度（不得因空间不足被截断）
+    legend_labels = [text.get_text() for text in fig.axes[0].get_legend().get_texts()]
+    assert legend_labels == ["技能匹配", "薪资待遇", "发展空间", "岗位规模", "生活宜居"]
+
+
+def test_career_score_breakdown_legend_band_scales_with_rows():
+    """行数不同（1~30 行）时图例均不得压住底部条形，且 y 轴下界为图例外扩。"""
+    import pandas as pd
+
+    base = _career_frame()
+    columns = ("w_skill_score", "w_salary_score", "w_demand_score",
+               "w_scale_score", "w_life_score")
+    labels = ("技能匹配", "薪资待遇", "发展空间", "岗位规模", "生活宜居")
+    for rows in (1, 5, 20, 30):
+        data = pd.DataFrame({c: list(base[c]) * 10 for c in base.columns}).head(rows)
+        fig = charts.career_score_breakdown(
+            data, columns=columns, labels=labels, label_col="industry",
+        )
+        _assert_fig(fig)
+        assert _legend_overlap_problems(fig, rows) == [], f"{rows} 行时图例与条形重叠"
+        # 底部空白带：y 轴下界应大于「最后一行条形」的位置（n - 0.5）
+        assert fig.axes[0].get_ylim()[0] > rows - 0.5
+
+
 def test_career_score_breakdown_empty():
     import pandas as pd
 
