@@ -151,6 +151,64 @@ def test_career_score_breakdown():
     _assert_fig(fig)
 
 
+def _stack_colors(fig, per_dim: int) -> list[str]:
+    """按「每维度一组条形」的顺序取出堆叠条形的填充色（hex 字符串）。"""
+    from matplotlib.colors import to_hex
+
+    patches = fig.axes[0].patches
+    assert per_dim > 0 and len(patches) % per_dim == 0
+    return [
+        to_hex(patches[index * per_dim].get_facecolor())
+        for index in range(len(patches) // per_dim)
+    ]
+
+
+def test_career_score_breakdown_dimension_colors_are_distinct():
+    """匹配度构成图的各维度应各用一种颜色（不得所有分段同为兜底灰）。"""
+    from matplotlib.colors import to_hex
+
+    data = _career_frame()
+    columns = ("w_skill_score", "w_salary_score", "w_demand_score",
+               "w_scale_score", "w_life_score")
+    labels = ("技能匹配", "薪资待遇", "发展空间", "岗位规模", "生活宜居")
+    fig = charts.career_score_breakdown(
+        data, columns=columns, labels=labels, label_col="industry"
+    )
+
+    colors = _stack_colors(fig, len(data))
+    assert len(colors) == len(columns)
+    assert len(set(colors)) == len(columns), f"各维度颜色应互不相同，实际为 {colors}"
+    assert "#999999" not in colors, "维度颜色不应退化为兜底灰色"
+
+    # w_ 前缀 / _score 后缀 / demand 别名均应命中内置维度配色
+    expected = [
+        to_hex(charts.CAREER_DIM_COLORS[key])
+        for key in ("skill", "salary", "growth", "scale", "life")
+    ]
+    assert colors == expected
+    legend_labels = [text.get_text() for text in fig.axes[0].get_legend().get_texts()]
+    assert legend_labels == list(labels)
+
+
+def test_career_score_breakdown_color_map_override_and_fallback():
+    """color_map 支持列名 / 中文图例名 / 维度关键词，未命中维度自动取兜底色且不撞色。"""
+    data = _career_frame()
+    data["w_custom_score"] = [3.0, 2.0, 1.0]
+    fig = charts.career_score_breakdown(
+        data,
+        columns=("w_skill_score", "w_demand_score", "w_custom_score"),
+        labels=("技能匹配", "发展空间", "自定义维度"),
+        label_col="industry",
+        color_map={"w_skill_score": "#123456", "发展空间": "#abcdef", "scale": "#654321"},
+    )
+
+    colors = _stack_colors(fig, len(data))
+    assert colors[0] == "#123456", "列名精确命中时应使用覆盖色"
+    assert colors[1] == "#abcdef", "中文图例名命中时应使用覆盖色"
+    assert colors[2] not in {"#123456", "#abcdef"}
+    assert len(set(colors)) == len(colors), f"兜底配色不得与其它维度撞色：{colors}"
+
+
 def test_career_score_breakdown_empty():
     import pandas as pd
 

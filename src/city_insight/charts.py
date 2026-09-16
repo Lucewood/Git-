@@ -441,6 +441,108 @@ def house_backtest_chart(
 # ---------------------------------------------------------------------------
 # 就业指导与支柱产业
 # ---------------------------------------------------------------------------
+# 匹配度构成图的内置维度配色（键 = 维度关键词，可用 color_map 覆盖）
+CAREER_DIM_COLORS: dict[str, str] = {
+    "skill": "#4e79a7",   # 技能匹配
+    "salary": "#f28e2b",  # 薪资待遇
+    "growth": "#59a14f",  # 发展空间
+    "scale": "#8b5cf6",   # 岗位规模
+    "life": "#e15759",    # 生活宜居
+}
+# 兜底配色：维度关键词识别失败时按序取色，保证任意命名下各段颜色互不相同
+_FALLBACK_DIM_COLORS: tuple[str, ...] = (
+    "#4e79a7", "#f28e2b", "#59a14f", "#b07aa1", "#e15759",
+    "#76b7b2", "#edc948", "#9c755f",
+)
+# 列名 → 维度关键词的常见前后缀（w_skill_score / skill_score / weight_skill 等）
+_DIM_KEY_PREFIXES: tuple[str, ...] = ("weight_", "w_")
+_DIM_KEY_SUFFIXES: tuple[str, ...] = ("_weight", "_score", "_pct")
+# 维度关键词别名（推荐引擎中「发展空间」的列名为 demand_score）
+_DIM_KEY_ALIASES: dict[str, str] = {"demand": "growth", "life_quality": "life"}
+
+
+def _first_unused_color(used: set[str], index: int) -> str:
+    """从兜底配色中按位置轮转，返回第一个尚未被占用的颜色。"""
+    total = len(_FALLBACK_DIM_COLORS)
+    for offset in range(total):
+        candidate = _FALLBACK_DIM_COLORS[(index + offset) % total]
+        if candidate not in used:
+            return candidate
+    return "#999999"
+
+
+def _dimension_key(text: object) -> str | None:
+    """把列名 / 图例名归一化为维度关键词（如 ``w_skill_score`` → ``skill``）。
+
+    归一化步骤：小写 → 去除 ``w_`` / ``weight_`` 前缀与 ``_score`` 等后缀 →
+    查别名表 → 与内置维度关键词精确 / 包含匹配；无法识别时返回 None。
+    """
+    token = str(text).strip().lower()
+    if not token:
+        return None
+    candidates = [token]
+    stripped = token
+    for prefix in _DIM_KEY_PREFIXES:
+        if stripped.startswith(prefix):
+            stripped = stripped[len(prefix):]
+            break
+    for suffix in _DIM_KEY_SUFFIXES:
+        if stripped.endswith(suffix):
+            stripped = stripped[: -len(suffix)]
+            break
+    stripped = stripped.strip("_ ")
+    if stripped:
+        candidates.append(stripped)
+    candidates.extend(_DIM_KEY_ALIASES.get(item, "") for item in tuple(candidates))
+    for candidate in candidates:
+        if candidate and candidate in CAREER_DIM_COLORS:
+            return candidate
+    # 中文图例名（技能匹配 / 生活宜居）或含关键词的自定义命名：宽松包含匹配
+    for key in CAREER_DIM_COLORS:
+        if any(key in candidate for candidate in candidates if candidate):
+            return key
+    return None
+
+
+def _resolve_dim_colors(
+    columns: tuple[str, ...],
+    labels: tuple[str, ...],
+    color_map: dict[str, str] | None = None,
+) -> list[str]:
+    """解析每个维度的条形配色，并保证同一张图内各维度颜色互不相同。
+
+    解析优先级：color_map 精确键（列名 / 中文图例名）→ color_map 归一化维度键
+    → 内置 CAREER_DIM_COLORS → 兜底配色；已占用的颜色自动跳过，
+    因此即使维度命名（如 ``w_demand_score``）与配色键不一致，也不会退化为同色。
+    """
+    explicit = {str(key): str(value) for key, value in (color_map or {}).items()}
+    palette = {**CAREER_DIM_COLORS, **explicit}
+    colors: list[str] = []
+    used: set[str] = set()
+    for index, column in enumerate(columns):
+        label = labels[index] if index < len(labels) else ""
+        tokens = [token for token in (str(column).strip(), str(label).strip()) if token]
+        color = ""
+        # ① 显式覆盖：列名优先，其次中文图例名
+        for token in tokens:
+            if token in explicit:
+                color = explicit[token]
+                break
+        # ② 归一化维度键（w_skill_score / demand_score / 技能匹配 …）
+        if not color:
+            for token in tokens:
+                key = _dimension_key(token)
+                if key and key in palette:
+                    color = palette[key]
+                    break
+        # ③ 未命中或与已用颜色撞色 → 换用兜底配色中未被占用的颜色
+        if not color or color in used:
+            color = _first_unused_color(used, index)
+        used.add(color)
+        colors.append(color)
+    return colors
+
+
 def career_score_breakdown(
     data: pd.DataFrame,
     *,
@@ -455,15 +557,13 @@ def career_score_breakdown(
     """推荐匹配度构成：各维度「加权贡献」的水平堆叠条形图。
 
     Args:
-        data: 需含 label_col 与 columns 中全部维度列，且已按总分降序排列。
+        data: 需含 label_col；columns 中缺失的维度列按 0 分处理，且数据应已按总分降序排列。
         columns: 维度列名（子得分 0-100，调用方需预先按权重折算为贡献值）。
         labels: 与 columns 等长的中文图例名。
-        color_map: 维度 → 颜色（缺省使用内置配色）。
+        color_map: 维度 → 颜色。键可为列名（``w_skill_score``）、中文图例名
+            （``技能匹配``）或维度关键词（``skill``）；未命中的维度按内置
+            CAREER_DIM_COLORS / 兜底配色取色，且同一张图内颜色互不相同。
     """
-    palette = color_map or {
-        "skill": "#667eea", "salary": "#f59e0b", "growth": "#2e8b57",
-        "scale": "#8b5cf6", "life": "#ff7f50",
-    }
     if data.empty:
         fig, ax = plt.subplots(figsize=(8, 4))
         ax.text(0.5, 0.5, "无数据可展示", ha="center", va="center", fontsize=12)
@@ -477,10 +577,15 @@ def career_score_breakdown(
 
     left = np.zeros(len(data))
     y_pos = np.arange(len(data))
-    for column, label in zip(columns, labels):
-        values = pd.to_numeric(data[column], errors="coerce").fillna(0.0).to_numpy()
+    # 每维度一种颜色（互不相同），确保图例与条形可区分
+    colors = _resolve_dim_colors(columns, labels, color_map)
+    for column, label, color in zip(columns, labels, colors):
+        if column in data.columns:
+            values = pd.to_numeric(data[column], errors="coerce").fillna(0.0).to_numpy()
+        else:
+            values = np.zeros(len(data))  # 字段缺失时该维度按 0 分计入
         ax.barh(
-            y_pos, values, left=left, color=palette.get(column, "#999"),
+            y_pos, values, left=left, color=color,
             edgecolor="white", linewidth=0.6, label=label,
         )
         left += values
@@ -491,7 +596,11 @@ def career_score_breakdown(
     ax.set_xlabel(xlabel, fontsize=11)
     ax.set_title(title, fontsize=13, fontweight="bold")
     ax.grid(axis="x", alpha=0.3, linestyle="--")
-    ax.legend(fontsize=9, loc="lower right", ncol=min(3, max(1, len(columns))))
+    ax.legend(
+        fontsize=9, loc="lower right",
+        ncol=min(3, max(1, len(columns))),
+        framealpha=0.9,  # 半透明底避免遮挡条形，同时保证图例配色可辨
+    )
     for idx, total in enumerate(left):
         ax.text(total + 0.6, idx, f"{total:.0f}", va="center", fontsize=9)
     return _finalize(fig)

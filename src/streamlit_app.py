@@ -1244,16 +1244,35 @@ CONTRIBUTION_DIMS: tuple[tuple[str, str, str], ...] = (
     ("scale", "scale_score", "岗位规模"),
     ("life", "life_score", "生活宜居"),
 )
+# 维度配色：加权列名 → 颜色（单一来源 = charts.CAREER_DIM_COLORS 的维度关键词），
+# 显式传入 color_map 可避免依赖图表的名称推断，确保各段颜色稳定可辨。
+CONTRIBUTION_COLORS: dict[str, str] = {
+    f"w_{column}": charts.CAREER_DIM_COLORS[key]
+    for key, column, _label in CONTRIBUTION_DIMS
+}
+
+
+def _active_contribution_dims(
+    profile: career.CareerProfile,
+) -> tuple[tuple[str, str, str], ...]:
+    """参与匹配度构成图的维度（权重为 0 的维度不显示，与图注保持一致）。"""
+    weights = profile.normalized_weights
+    active = tuple(
+        dim for dim in CONTRIBUTION_DIMS if weights.get(dim[0], 0.0) > 0.0
+    )
+    return active or CONTRIBUTION_DIMS  # 兜底：权重异常时仍展示全部维度
 
 
 def _career_contributions(
-    profile: career.CareerProfile, frame: pd.DataFrame
+    profile: career.CareerProfile,
+    frame: pd.DataFrame,
+    dims: tuple[tuple[str, str, str], ...] = CONTRIBUTION_DIMS,
 ) -> pd.DataFrame:
     """把各维度子得分按权重折算为「加权得分贡献」，供堆叠条形图使用。"""
     weights = profile.normalized_weights
     data = frame.copy()
     data["推荐项"] = data["city"].astype(str) + " · " + data["industry"].astype(str)
-    for key, column, _label in CONTRIBUTION_DIMS:
+    for key, column, _label in dims:
         data[f"w_{column}"] = (
             pd.to_numeric(data[column], errors="coerce").fillna(0.0) * weights[key]
         )
@@ -1304,22 +1323,25 @@ def _render_career_recommendations(
     chart_col, table_col = st.columns([1, 1.35])
     with chart_col:
         st.markdown("#### 📊 匹配度构成（各维度加权贡献）")
-        contributions = _career_contributions(profile, top_rows)
-        columns = tuple(f"w_{column}" for _key, column, _label in CONTRIBUTION_DIMS)
-        labels = tuple(label for _key, _column, label in CONTRIBUTION_DIMS)
+        # 只保留权重 > 0 的维度：图例与条形一一对应，避免出现零长度分段混淆
+        active_dims = _active_contribution_dims(profile)
+        contributions = _career_contributions(profile, top_rows, active_dims)
+        columns = tuple(f"w_{column}" for _key, column, _label in active_dims)
+        labels = tuple(label for _key, _column, label in active_dims)
         render_fig(
             charts.career_score_breakdown(
                 contributions,
                 columns=columns,
                 labels=labels,
                 label_col="推荐项",
+                color_map=CONTRIBUTION_COLORS,
                 title="推荐项匹配度构成（加权得分）",
                 figsize=(6.6, max(3.6, len(contributions) * 0.42 + 2)),
             )
         )
         st.caption(
-            "条形总长 ≈ 匹配度（未含学历修正项），每段代表一个维度的加权得分；"
-            "权重为 0 的维度不会出现在条形中。"
+            "条形总长 ≈ 匹配度（未含学历修正项），每段代表一个维度的加权得分"
+            "（分段颜色与图例一一对应）；权重为 0 的维度不会出现在条形与图例中。"
         )
 
     with table_col:
