@@ -1,22 +1,3 @@
-"""
-中国城市生活成本与幸福感分析可视化 —— Streamlit 交互式网页应用
-
-v2.1 结构优化说明
-1. 模块化架构：业务逻辑拆分至 src/city_insight 包
-   （config / logging_setup / data_loader / analysis / charts / widgets / styles），
-   本入口脚本只负责页面编排与章节渲染。
-2. 章节函数化：将页面各内容区块拆分为 render_* 局部渲染函数，主流程仅负责
-   数据加载、侧边栏筛选、KPI 概览与按序调用各章节，可读性与可维护性显著提升。
-3. 健壮性：
-   - 图表统一经 render_fig() 输出并在 finally 中自动关闭 figure，杜绝句柄泄漏；
-   - 预测 / 地图等依赖外部文件或组件的环节失败时降级为提示，不中断整页；
-   - 数值筛选、Top-N、相关性、百分位画像等对空数据 / 零方差 / 极小样本均做了防护；
-   - 就业指导章节：引擎结果按「求职画像 + 筛选范围」缓存（st.cache_data），
-     支柱产业表缺列 / 字段全空时按维度 0 分降级并给出字段级提示，不抛异常；
-   - 表格样式与列格式由 _styled_table() / TABLE_FORMAT 集中管理。
-4. 数据管道化：data_loader 提供纯函数加载 + Streamlit 缓存包装，数据签名感知文件变化；
-   常住人口、住房可负担指数与综合宜居评分等派生指标口径见 data/metadata.json。
-"""
 from __future__ import annotations
 
 import hashlib
@@ -122,11 +103,26 @@ CAREER_LABELS: dict[str, str] = {**COLUMN_LABELS, **SCORE_LABELS}
 # 通用辅助函数（不依赖页面状态的纯逻辑）
 # ---------------------------------------------------------------------------
 def to_excel_bytes(data: pd.DataFrame) -> bytes:
-    """将 DataFrame 序列化为 Excel 字节流。"""
+    """将 DataFrame 序列化为 Excel 字节流（纯函数，不依赖 Streamlit）。"""
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         data.to_excel(writer, index=False, sheet_name="城市数据")
     return buffer.getvalue()
+
+
+@st.cache_data(show_spinner=False, max_entries=8)
+def excel_bytes_cached(data: pd.DataFrame) -> bytes | None:
+    """Excel 导出字节流（按数据缓存）。
+
+    序列化（openpyxl 写 xlsx）是导出环节里最重的操作，缓存后仅当筛选结果
+    变化时才重算；缺少 openpyxl 等异常场景返回 None，调用方据此降级为
+    文字提示，而不是让整页崩溃。
+    """
+    try:
+        return to_excel_bytes(data)
+    except Exception as exc:  # noqa: BLE001 - 导出属增强功能，失败降级即可
+        logger.warning("Excel 导出不可用（%s），已降级为文字提示。", exc)
+        return None
 
 
 def _stable_digest(text: str) -> str:
@@ -193,17 +189,50 @@ def _num_text(value: object, fmt: str, fallback: str = "—") -> str:
         return fallback
     return fmt.format(number)
 
+
+def _cny_text(value: object, fallback: str = "—") -> str:
+    """金额 → 文本（如 ¥12,345）；缺失 / 非法值显示 fallback。"""
+    return _num_text(value, "¥{:,.0f}", fallback)
+
+
+def _file_signature(path: Path) -> tuple[int, int] | None:
+    """文件签名（mtime_ns + size）；文件不存在 / 不可读时返回 None。
+
+    只把这份轻量签名（而非文件内容）纳进 Streamlit 缓存键：文件被
+    scripts/generate_maps.py 等重建后签名变化、缓存自动失效，同时避免
+    每次 rerun 重复读取大文件。
+    """
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return (stat.st_mtime_ns, stat.st_size)
+
 # ---------------------------------------------------------------------------
 # 地图 / 数据质量 / 预测流水线组件
 # ---------------------------------------------------------------------------
-@st.cache_data(show_spinner=False)
-def load_map_html(file_name: str) -> str | None:
-    """读取并预处理 HTML 地图内容（缓存字符串，文件变化时自动失效）。"""
+@st.cache_data(show_spinner=False, max_entries=8)
+def load_map_html(
+    file_name: str, signature: tuple[int, int] | None = None
+) -> str | None:
+    """读取并预处理 HTML 地图内容。
+
+    Args:
+        file_name: notebooks/ 下的地图 HTML 文件名。
+        signature: 由 _file_signature() 生成，仅用于构成缓存键；地图文件被
+            重新生成后签名变化、缓存自动失效（修复「同名文件内容更新仍命中
+            旧缓存」的问题）。为 None 表示文件不存在，直接返回 None。
+    """
+    if signature is None:
+        return None
     path = NOTEBOOKS_DIR / file_name
-    if not path.exists():
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:  # 读取间隙文件被删除 / 无读取权限：降级为提示
+        logger.warning("地图文件读取失败（%s）：%s", path, exc)
         return None
     # 替换固定宽度为 100% 以自适应容器
-    return path.read_text(encoding="utf-8").replace("width:900px;", "width:100%;")
+    return raw.replace("width:900px;", "width:100%;")
 
 
 def render_map(file_name: str, fallback_msg: str, height: int | None = None) -> None:
@@ -212,11 +241,12 @@ def render_map(file_name: str, fallback_msg: str, height: int | None = None) -> 
     说明：Streamlit 1.37+ 官方推荐使用 st.iframe（取代已弃用的
     st.components.v1.html），可自动识别 HTML 字符串 / 本地文件。
     """
-    html = load_map_html(file_name)
+    html = load_map_html(file_name, _file_signature(NOTEBOOKS_DIR / file_name))
     if html is None:
         st.warning(fallback_msg)
         return
     height = height or settings.default_map_height
+    tmp_partial: Path | None = None
     try:
         if settings.map_render_mode == "iframe":
             # 写入稳定临时文件供 iframe 引用；文件名由内容摘要决定，内容不变即可复用。
@@ -226,6 +256,7 @@ def render_map(file_name: str, fallback_msg: str, height: int | None = None) -> 
                 tmp_partial = tmp.with_name(f"{tmp.name}.{os.getpid()}.tmp")
                 tmp_partial.write_text(html, encoding="utf-8")
                 os.replace(tmp_partial, tmp)
+                tmp_partial = None
             st.iframe(src=tmp, height=height)
         else:
             st.iframe(html, height=height)
@@ -234,18 +265,32 @@ def render_map(file_name: str, fallback_msg: str, height: int | None = None) -> 
         st.warning(
             f"{fallback_msg}（组件渲染失败，可直接打开 notebooks/ 下对应文件查看）"
         )
+    finally:
+        # 写入 / 替换被中断时清理半截临时文件，避免在系统临时目录留下垃圾
+        if tmp_partial is not None:
+            try:
+                tmp_partial.unlink(missing_ok=True)
+            except OSError:  # pragma: no cover - 清理失败不影响页面
+                logger.debug("临时地图文件清理失败：%s", tmp_partial)
 
 
 def render_quality_report(q: dict, metadata: dict) -> None:
-    """渲染数据质量报告（完整数据浏览 · 第三个 Tab）。"""
+    """渲染数据质量报告（完整数据浏览 · 第三个 Tab）。
+
+    质量字典由 data_loader.validate_data() 产出；这里全部走 .get + 兜底，
+    即使字段缺失（如历史版本工件）也只降级显示，不抛 KeyError。
+    """
+    q = q or {}
+    shape = q.get("shape") or {}
+    missing_values = q.get("missing_values") or {}
+    num_summary = q.get("numeric_summary") or {}
+
     st.markdown("#### 📋 数据质量报告")
-    missing_core = sum(
-        v for k, v in q.get("missing_values", {}).items() if k != "province"
-    )
+    missing_core = sum(v for k, v in missing_values.items() if k != "province")
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("城市总数", q["shape"]["rows"])
-    c2.metric("字段数", q["shape"]["cols"])
-    c3.metric("重复城市", q["duplicate_cities"])
+    c1.metric("城市总数", shape.get("rows", 0))
+    c2.metric("字段数", shape.get("cols", 0))
+    c3.metric("重复城市", q.get("duplicate_cities", 0))
     c4.metric("核心指标缺失值", missing_core)
 
     with st.expander("📖 数据字典（字段口径与来源）", expanded=False):
@@ -255,21 +300,25 @@ def render_quality_report(q: dict, metadata: dict) -> None:
             st.info("未找到 data/metadata.json。")
 
     with st.expander("🔬 数据完整性明细", expanded=False):
-        missing_df = pd.DataFrame(
-            [{"字段": k, "缺失值": v} for k, v in q.get("missing_values", {}).items()]
-        )
-        st.dataframe(missing_df, hide_index=True, width="stretch")
+        if missing_values:
+            missing_df = pd.DataFrame(
+                [{"字段": k, "缺失值": v} for k, v in missing_values.items()]
+            )
+            st.dataframe(missing_df, hide_index=True, width="stretch")
+        else:
+            st.caption("未记录字段级缺失信息。")
 
-        num_summary = q.get("numeric_summary", {})
         if num_summary:
             summary_rows = []
             for col, stats in num_summary.items():
                 row = {"指标": COLUMN_LABELS.get(col, col)}
-                row.update(stats)
+                row.update(stats or {})
                 summary_rows.append(row)
             st.dataframe(
                 pd.DataFrame(summary_rows), hide_index=True, width="stretch"
             )
+        else:
+            st.caption("未记录数值型指标描述统计。")
 
     src_counts = q.get("source_city_counts", {})
     if src_counts:
@@ -288,10 +337,92 @@ def _load_forecast_pipeline(
     """构建并缓存房价预测机器学习流水线（跨 rerun 复用，数据变化自动失效）。
 
     仅接受可哈希的基本类型参数；模型对象（梯度提升树）保存在缓存中避免重复训练。
+    signature 同时包含房价历史文件，故历史序列被重建时缓存一并失效。
+
+    说明：这里刻意调用纯函数 load_and_merge（而不是带缓存的 load_data），
+    把「城市宽表」的缓存唯一地交给主流程的 load_data(signature) 负责——
+    否则两层缓存会用两套不同的签名各缓存一份相同的宽表，既浪费内存也
+    会让数据文件变化时的失效路径变得难以推理。
     """
     history = forecast.load_house_history(data_dir)
-    cross_df, _ = data_loader.load_data(data_dir, signature)
+    cross_df, _ = data_loader.load_and_merge(data_dir)
     return forecast.build_pipeline(history, cross_df)
+
+
+# 预测明细 / 回测 / 逐年验证表的列名与格式（集中管理，避免列名漂移）
+FC_DETAIL_COLUMNS: tuple[str, ...] = (
+    "年份", "预测房价", "区间下限", "区间上限", "同比涨幅",
+)
+FC_DETAIL_FORMAT: dict[str, str] = {
+    "预测房价": "{:,.0f}", "区间下限": "{:,.0f}",
+    "区间上限": "{:,.0f}", "同比涨幅": "{:+.2f}%",
+}
+BACKTEST_COLUMNS: tuple[str, ...] = (
+    "年份", "上一年房价", "预测", "区间下限", "区间上限", "实际", "相对误差(%)",
+)
+BACKTEST_FORMAT: dict[str, str] = {
+    "上一年房价": "{:,.0f}", "预测": "{:,.0f}", "区间下限": "{:,.0f}",
+    "区间上限": "{:,.0f}", "实际": "{:,.0f}", "相对误差(%)": "{:+.1f}",
+}
+# walk-forward 逐年验证明细的必需字段（缺字段视为旧版工件，跳过展示）
+FOLD_COLUMNS: tuple[str, ...] = (
+    "target_year", "test_samples", "rmse", "mae", "r2", "hit_rate",
+    "rmse_dev", "r2_dev",
+)
+FOLD_FORMAT: dict[str, str] = {
+    "RMSE(%)": "{:.2f}", "MAE(%)": "{:.2f}", "R²": "{:.3f}",
+    "方向命中率(%)": "{:.1f}", "偏离RMSE(%)": "{:.2f}", "偏离R²": "{:.3f}",
+}
+
+
+def _folds_view(folds: list[dict] | None) -> pd.DataFrame | None:
+    """把 walk-forward 逐年验证明细整理为展示表。
+
+    字段缺失（例如缓存中的旧版工件）时返回 None 并记录日志，由调用方降级提示，
+    避免直接索引列名抛 KeyError；数值列统一 to_numeric，防止 None 参与乘法运算。
+    """
+    if not folds:
+        return None
+    frame = pd.DataFrame(folds)
+    absent = [col for col in FOLD_COLUMNS if col not in frame.columns]
+    if absent:
+        logger.warning("逐年验证明细缺少字段 %s，已跳过展示。", absent)
+        return None
+
+    def _num(column: str) -> pd.Series:
+        return pd.to_numeric(frame[column], errors="coerce")
+
+    return pd.DataFrame({
+        "预测年度": frame["target_year"],
+        "验证样本": frame["test_samples"],
+        "RMSE(%)": (_num("rmse") * 100.0).round(2),
+        "MAE(%)": (_num("mae") * 100.0).round(2),
+        "R²": _num("r2").round(3),
+        "方向命中率(%)": (_num("hit_rate") * 100.0).round(1),
+        "偏离RMSE(%)": (_num("rmse_dev") * 100.0).round(2),
+        "偏离R²": _num("r2_dev").round(3),
+    })
+
+
+def _rename_columns_exact(
+    frame: pd.DataFrame, names: tuple[str, ...]
+) -> pd.DataFrame | None:
+    """按位置把「定宽表」的列名替换为中文表头。
+
+    预测明细 / 回测结果由 forecast 模块产出，列数与顺序是既定契约；这里校验
+    列数后再改名，遇到异构 / 旧版工件时返回 None 由调用方跳过展示，
+    避免直接赋值触发 ValueError（长度不匹配）或错列错位。
+    """
+    if len(frame.columns) != len(names):
+        logger.warning(
+            "表结构不符合预期：期望 %d 列，实际 %d 列，已跳过展示。",
+            len(names), len(frame.columns),
+        )
+        return None
+    renamed = frame.copy()
+    renamed.columns = list(names)
+    return renamed
+
 
 # ===========================================================================
 # 章节渲染函数（每个函数对应页面一个内容区块，按主流程顺序调用）
@@ -378,11 +509,20 @@ def render_city_comparison(
     filtered_df: pd.DataFrame,
     main_color: str,
     province_map: dict[str, str],
+    stats: dict[str, float],
 ) -> None:
-    """第二节：城市对比与画像。"""
+    """第二节：城市对比与画像。
+
+    Args:
+        stats: 主流程已算好的筛选范围汇总量（避免在此重复统计一次均值）。
+    """
     widgets.section_title("🔬 城市对比与画像")
 
-    city_options = filtered_df["city"].tolist()
+    # 「城市 → 行」索引只建一次：下拉选项与城市画像取值都复用它，
+    # 省掉画像里重复的一次全表布尔扫描（drop_duplicates 保证 city 唯一，
+    # 后续 .loc[city] 恒定返回 Series，不会退化为 DataFrame）
+    city_lookup = filtered_df.drop_duplicates(subset="city").set_index("city")
+    city_options = city_lookup.index.tolist()
     fmt_city = _city_label_mapper(province_map)
 
     cmp_col, profile_col = st.columns([1.3, 1])
@@ -416,18 +556,29 @@ def render_city_comparison(
         st.info("请至少选择 2 个城市以进行对比。")
 
     if profile_city:
-        _render_city_profile(filtered_df, profile_city, main_color)
+        _render_city_profile(city_lookup, profile_city, main_color, stats)
 
 
 def _render_city_profile(
-    filtered_df: pd.DataFrame, profile_city: str, main_color: str
+    city_lookup: pd.DataFrame,
+    profile_city: str,
+    main_color: str,
+    stats: dict[str, float],
 ) -> None:
-    """渲染单个城市的指标画像（百分位卡片 + 画像图 + 明细表）。"""
-    row = filtered_df[filtered_df["city"] == profile_city].iloc[0]
+    """渲染单个城市的指标画像（百分位卡片 + 画像图 + 明细表）。
+
+    Args:
+        city_lookup: 以 city 为索引的筛选范围数据（调用方复用同一份索引）。
+        stats: 筛选范围汇总量（调用方已算好，避免重复统计）。
+    """
+    if profile_city not in city_lookup.index:
+        st.info(f"当前筛选范围内没有城市「{profile_city}」的数据。")
+        return
+    row = city_lookup.loc[profile_city]
     # 六个指标百分位一次批量 rank（等价于逐列 rank，但只需一次向量化计算）
     pct = (
-        filtered_df[list(METRIC_COLS)].rank(pct=True) * 100.0
-    ).loc[row.name].astype(float)
+        city_lookup[list(METRIC_COLS)].rank(pct=True) * 100.0
+    ).loc[profile_city].astype(float)
 
     m1, m2, m3, m4, m5, m6 = st.columns(6)
     profile_cards = [
@@ -449,9 +600,8 @@ def _render_city_profile(
     with col_profile:
         render_fig(charts.city_profile_chart(pct, color=main_color))
     with col_detail:
-        stats = _means(filtered_df)
         st.markdown(
-            f"#### 📋 {profile_city} 数据一览（筛选范围：{len(filtered_df)} 个城市）"
+            f"#### 📋 {profile_city} 数据一览（筛选范围：{len(city_lookup)} 个城市）"
         )
         detail = pd.DataFrame({
             "指标": ["幸福度", "年收入", "房价", "常住人口", "可负担指数", "综合宜居分"],
@@ -504,26 +654,28 @@ def render_forecast(
         )
 
     # 构建 / 训练预测流水线（模型跨 rerun 缓存，仅在数据变化时重训）
-    pipeline = None
+    pipeline: dict | None = None
     try:
         pipeline = _load_forecast_pipeline(
             data_loader.data_signature(DATA_DIR, (forecast.HISTORY_FILE,)), DATA_DIR
         )
-    except FileNotFoundError as exc:
-        st.warning(f"房价历史数据缺失，无法进行趋势预测：{exc}")
+    except Exception as exc:  # noqa: BLE001 - 外部数据 / 训练环节异常均只降级提示
+        logger.exception("房价预测流水线构建失败")
+        st.warning(
+            f"房价趋势预测暂不可用（{exc}）：请确认 data/house_price_history.csv "
+            f"存在并包含 2005–{DATA_REF_YEAR} 的完整历史序列。"
+        )
+        return
 
-    artifacts = (pipeline or {}).get("artifacts")
-    model_ready = artifacts is not None and (
-        artifacts.get("model") is not None or artifacts.get("ridge") is not None
-    )
-    if not model_ready:
+    artifacts = (pipeline or {}).get("artifacts") or {}
+    if artifacts.get("model") is None and artifacts.get("ridge") is None:
         st.info(
             "预测引擎暂不可用：请确认 data/house_price_history.csv 存在，"
             f"且包含 2005–{DATA_REF_YEAR} 完整历史序列。"
         )
         return
 
-    fc_metrics = artifacts["metrics"]
+    fc_metrics = artifacts.get("metrics") or {}
     fmt_city = _city_label_mapper(province_map)
 
     fc_ctrl, fc_meta = st.columns([1.25, 1])
@@ -560,15 +712,22 @@ def render_forecast(
         }[fc_scenario_label]
     with fc_meta:
         st.markdown("##### 🧠 模型概况")
-        backend_name = forecast.MODEL_NAMES.get(artifacts["backend"], artifacts["backend"])
+        backend = str(artifacts.get("backend") or "")
+        backend_name = forecast.MODEL_NAMES.get(backend, backend or "未知后端")
+        test_years = fc_metrics.get("test_years") or ()
+        window_text = (
+            f"{test_years[0]}–{test_years[1]} 年各外推 1 年"
+            if len(test_years) == 2 else "未记录验证窗口"
+        )
         st.markdown(
             f"- **算法**：{backend_name}\n"
-            f"- **训练样本（逐年累计）/ 验证**：{fc_metrics['train_samples']:,} / "
-            f"{fc_metrics['test_samples']:,} 条\n"
-            f"- **验证方式**：walk-forward 逐年重训（{fc_metrics['test_years'][0]}–"
-            f"{fc_metrics['test_years'][1]} 年各外推 1 年）\n"
-            f"- **外样本 RMSE / R²**：{fc_metrics['rmse'] * 100:.1f}% / {fc_metrics['r2']:.2f}，"
-            f"方向命中率 {fc_metrics['hit_rate'] * 100:.0f}%"
+            f"- **训练样本（逐年累计）/ 验证**："
+            f"{_num_text(fc_metrics.get('train_samples'), '{:,.0f}')} / "
+            f"{_num_text(fc_metrics.get('test_samples'), '{:,.0f}')} 条\n"
+            f"- **验证方式**：walk-forward 逐年重训（{window_text}）\n"
+            f"- **外样本 RMSE / R²**：{_num_text(fc_metrics.get('rmse'), '{:.1%}')} / "
+            f"{_num_text(fc_metrics.get('r2'), '{:.2f}')}，"
+            f"方向命中率 {_num_text(fc_metrics.get('hit_rate'), '{:.0%}')}"
         )
 
     # 递归预测（单城市失败不中断整页）
@@ -628,10 +787,25 @@ def _render_forecast_result(
             sub=f"置信水平 {fc['confidence'] * 100:.0f}%",
         )
 
+    # 面板覆盖的城市数（用于特征重要性图注，避免写死城市数量）
+    cross_df = pipeline.get("cross")
+    panel_cities = (
+        int(cross_df["city"].nunique())
+        if isinstance(cross_df, pd.DataFrame) and "city" in cross_df.columns
+        else 0
+    )
+
     if hist_stats is not None:
-        widgets.insight_box(
-            forecast.build_narrative(fc_city, fc["province"], hist_stats, fc, artifacts)
-        )
+        # 结论文案由 forecast 侧拼装，属增强信息：旧版工件 / 字段缺失时只降级，
+        # 不影响上方 KPI 与走势图等主结论
+        try:
+            widgets.insight_box(
+                forecast.build_narrative(
+                    fc_city, fc["province"], hist_stats, fc, artifacts
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("城市「%s」预测结论文案生成失败：%s", fc_city, exc)
 
     f_plot, f_side = st.columns([1.65, 1])
     with f_plot:
@@ -644,16 +818,33 @@ def _render_forecast_result(
         render_fig(fig)
     with f_side:
         st.markdown("#### 🧠 关键驱动特征（全样本模型）")
-        imp_df = artifacts["importance"].head(8).copy()
-        imp_df["特征"] = imp_df["feature"].map(forecast.FEATURE_LABELS)
-        imp_df = imp_df.sort_values("importance").reset_index(drop=True)
-        fig2 = charts.barh_ranking(
-            imp_df, "importance", label_col="特征", color="#8b5cf6",
-            title="对下一年房价涨幅的贡献",
-            xlabel="特征重要性", fmt="{:.3f}", figsize=(6.4, 4.4),
-        )
-        render_fig(fig2)
-        st.caption("重要性来自全量 248 城面板模型；年份 / 全国动量等宏观特征用于刻画周期。")
+        importance = artifacts.get("importance")
+        if (
+            isinstance(importance, pd.DataFrame)
+            and not importance.empty
+            and {"feature", "importance"}.issubset(importance.columns)
+        ):
+            imp_df = importance.head(8).copy()
+            # 未登记中文名的特征回退为原始字段名，避免图标签出现 nan
+            imp_df["特征"] = (
+                imp_df["feature"]
+                .map(forecast.FEATURE_LABELS)
+                .fillna(imp_df["feature"].astype(str))
+            )
+            imp_df = imp_df.sort_values("importance").reset_index(drop=True)
+            fig2 = charts.barh_ranking(
+                imp_df, "importance", label_col="特征", color="#8b5cf6",
+                title="对下一年房价涨幅的贡献",
+                xlabel="特征重要性", fmt="{:.3f}", figsize=(6.4, 4.4),
+            )
+            render_fig(fig2)
+            st.caption(
+                "重要性来自全量 "
+                + (f"{panel_cities} 城" if panel_cities else "样本")
+                + "面板模型；年份 / 全国动量等宏观特征用于刻画周期。"
+            )
+        else:
+            st.info("本次流水线未产出特征重要性数据（可能是旧版工件）。")
 
     def _fmt_pct(value: float | None) -> str:
         return "—" if value is None else f"{value * 100:+.1f}%"
@@ -673,12 +864,12 @@ def _render_forecast_result(
                         "历史年波动率（对数涨幅）",
                     ],
                     "数值": [
-                        f"¥{hist_stats['start_price']:,.0f}",
-                        f"¥{hist_stats['ref_price']:,.0f}",
-                        _fmt_pct(hist_stats["cagr_total"]),
-                        _fmt_pct(hist_stats["cagr_5y"]),
-                        _fmt_pct(hist_stats["cagr_10y"]),
-                        f"{hist_stats['volatility'] * 100:.1f}%",
+                        _cny_text(hist_stats.get("start_price")),
+                        _cny_text(hist_stats.get("ref_price")),
+                        _fmt_pct(hist_stats.get("cagr_total")),
+                        _fmt_pct(hist_stats.get("cagr_5y")),
+                        _fmt_pct(hist_stats.get("cagr_10y")),
+                        _num_text(hist_stats.get("volatility"), "{:.1%}"),
                     ],
                 }
             )
@@ -688,19 +879,19 @@ def _render_forecast_result(
 
     with fc_detail:
         st.markdown(f"#### 🗓️ 逐年预测明细（{DATA_REF_YEAR + 1}–{fc_last_year}）")
-        fc_detail_df = fc["forecast"].copy()
-        fc_detail_df.columns = ["年份", "预测房价", "区间下限", "区间上限", "同比涨幅"]
-        st.dataframe(
-            widgets.fmt_table(
-                fc_detail_df,
-                {"预测房价": "{:,.0f}", "区间下限": "{:,.0f}",
-                 "区间上限": "{:,.0f}", "同比涨幅": "{:+.2f}%"},
-                gradient_col="预测房价",
-                cmap="YlOrRd",
-            ),
-            hide_index=True,
-            width="stretch",
-        )
+        fc_detail_df = _rename_columns_exact(fc["forecast"], FC_DETAIL_COLUMNS)
+        if fc_detail_df is None:
+            st.info("预测明细字段与预期不一致，已跳过展示。")
+        else:
+            st.dataframe(
+                widgets.fmt_table(
+                    fc_detail_df, FC_DETAIL_FORMAT,
+                    gradient_col="预测房价",
+                    cmap="YlOrRd",
+                ),
+                hide_index=True,
+                width="stretch",
+            )
         st.download_button(
             "⬇️ 下载预测明细（CSV）",
             data=fc["forecast"].to_csv(index=False).encode("utf-8-sig"),
@@ -717,7 +908,7 @@ def _render_forecast_validation(
     pipeline: dict, fc_city: str, main_color: str
 ) -> None:
     """渲染“模型验证与外样本回测”折叠面板（逐年指标 + 选定城市回测）。"""
-    artifacts = pipeline["artifacts"]
+    artifacts = pipeline.get("artifacts") or {}
     folds = artifacts.get("folds") or []
     with st.expander("🎯 模型验证与外样本回测（walk-forward）", expanded=False):
         st.markdown(
@@ -725,25 +916,14 @@ def _render_forecast_validation(
             "并外推下一年，验证集不参与训练。下方指标为逐年重训后在外样本上聚合得到，"
             "可视为模型真实外推能力的估计。"
         )
-        if folds:
+        view = _folds_view(folds)
+        if view is None:
+            st.info("当前流水线未启用逐年 walk-forward 验证（可能是旧版工件）。")
+        else:
             st.markdown("##### 📐 逐年外样本指标（验证年 → 预测下一年）")
-            fv = pd.DataFrame(folds)
-            view = pd.DataFrame({
-                "预测年度": fv["target_year"],
-                "验证样本": fv["test_samples"],
-                "RMSE(%)": (fv["rmse"] * 100.0).round(2),
-                "MAE(%)": (fv["mae"] * 100.0).round(2),
-                "R²": fv["r2"].round(3),
-                "方向命中率(%)": (fv["hit_rate"] * 100.0).round(1),
-                "偏离RMSE(%)": (fv["rmse_dev"] * 100.0).round(2),
-                "偏离R²": fv["r2_dev"].round(3),
-            })
             st.dataframe(
                 widgets.fmt_table(
-                    view,
-                    {"RMSE(%)": "{:.2f}", "MAE(%)": "{:.2f}", "R²": "{:.3f}",
-                     "方向命中率(%)": "{:.1f}", "偏离RMSE(%)": "{:.2f}",
-                     "偏离R²": "{:.3f}"},
+                    view, FOLD_FORMAT,
                     gradient_col="R²",
                     cmap="RdYlGn",
                 ),
@@ -755,27 +935,25 @@ def _render_forecast_validation(
                 "真实值计入）；带“偏离”前缀的同名指标去掉全国共同涨落后、仅评估城市偏离"
                 "部分的预测能力，与模型的目标空间一致。"
             )
-        else:
-            st.info("当前流水线未启用逐年 walk-forward 验证（可能是旧版工件）。")
 
         st.markdown(f"#### 🧭 「{fc_city}」逐年外样本回测（预测 vs 实际）")
         try:
             bt = forecast.city_backtest(pipeline, fc_city)
-        except (ValueError, RuntimeError) as exc:
+        except Exception as exc:  # noqa: BLE001 - 回测属增强信息，失败不影响主结论
+            logger.warning("城市「%s」外样本回测不可用：%s", fc_city, exc)
             st.info(f"该城市暂无可用的回测结果：{exc}")
             return
 
-        mape = float(bt["error_pct"].abs().mean())
-        max_abs = float(bt["error_pct"].abs().max())
+        error_abs = pd.to_numeric(bt.get("error_pct"), errors="coerce").abs()
         v_col1, v_col2, v_col3 = st.columns(3)
         v_col1.metric("回测年份数", f"{len(bt)} 年")
-        v_col2.metric("平均绝对相对误差", f"{mape:.1f}%")
-        v_col3.metric("最大绝对误差", f"{max_abs:.1f}%")
+        v_col2.metric("平均绝对相对误差", _num_text(error_abs.mean(), "{:.1f}%"))
+        v_col3.metric("最大绝对误差", _num_text(error_abs.max(), "{:.1f}%"))
 
         v_plot, v_tab = st.columns([1.55, 1])
         with v_plot:
             fig = charts.house_backtest_chart(
-                pipeline["history"], bt,
+                pipeline.get("history"), bt,
                 conf=forecast.DEFAULT_CONF,
                 title=f"「{fc_city}」walk-forward 外样本回测",
             )
@@ -785,23 +963,20 @@ def _render_forecast_validation(
                 "当年真实值，用于单独衡量机器学习“城市偏离”部分的预测力（不含宏观情景假设）。"
             )
         with v_tab:
-            bt_view = bt.copy()
-            bt_view.columns = [
-                "年份", "上一年房价", "预测", "区间下限", "区间上限", "实际", "相对误差(%)"
-            ]
-            st.dataframe(
-                widgets.fmt_table(
-                    bt_view,
-                    {"上一年房价": "{:,.0f}", "预测": "{:,.0f}",
-                     "区间下限": "{:,.0f}", "区间上限": "{:,.0f}",
-                     "实际": "{:,.0f}", "相对误差(%)": "{:+.1f}"},
-                    gradient_col="相对误差(%)",
-                    cmap="RdBu_r",
-                ),
-                hide_index=True,
-                width="stretch",
-            )
-            st.caption("房价单位：元/㎡；相对误差 =（预测 ÷ 实际 − 1）× 100%。")
+            bt_view = _rename_columns_exact(bt, BACKTEST_COLUMNS)
+            if bt_view is None:
+                st.info("回测结果字段与预期不一致，已跳过展示。")
+            else:
+                st.dataframe(
+                    widgets.fmt_table(
+                        bt_view, BACKTEST_FORMAT,
+                        gradient_col="相对误差(%)",
+                        cmap="RdBu_r",
+                    ),
+                    hide_index=True,
+                    width="stretch",
+                )
+                st.caption("房价单位：元/㎡；相对误差 =（预测 ÷ 实际 − 1）× 100%。")
 
 
 
@@ -1385,7 +1560,7 @@ def _render_career_recommendations(
         for rank, (_idx, row) in enumerate(advice_rows.iterrows(), start=1):
             st.markdown(
                 f"**{rank}. {row['city']} · {row['industry']}**"
-                f"（{row['category']}｜匹配度 {float(row['match_score']):.1f}）  \n"
+                f"（{row['category']}｜匹配度 {_num_text(row.get('match_score'), '{:.1f}')}）  \n"
                 f"{career.build_advice(profile, row)}"
             )
 
@@ -1779,13 +1954,19 @@ def render_data_browser(
                 width="stretch",
             )
         with dl_col2:
-            st.download_button(
-                "📥 下载 Excel",
-                data=to_excel_bytes(city_display),
-                file_name="中国城市生活成本与幸福感数据.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                width="stretch",
-            )
+            # Excel 序列化（openpyxl）是导出环节里最重的操作，按筛选后的数据缓存，
+            # 仅当筛选结果变化时才重新生成；依赖缺失时降级为文字提示
+            excel_bytes = excel_bytes_cached(city_display)
+            if excel_bytes is None:
+                st.caption("（Excel 导出不可用：缺少 openpyxl 依赖）")
+            else:
+                st.download_button(
+                    "📥 下载 Excel",
+                    data=excel_bytes,
+                    file_name="中国城市生活成本与幸福感数据.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    width="stretch",
+                )
         with dl_col3:
             st.download_button(
                 "📥 下载 JSON",
@@ -1976,7 +2157,7 @@ with c5:
 province_map = df.set_index("city")["province"].to_dict()
 
 render_association(filtered_df, main_color)
-render_city_comparison(filtered_df, main_color, province_map)
+render_city_comparison(filtered_df, main_color, province_map, stats)
 render_forecast(df, main_color, province_map)
 render_happiness_ranking(filtered_df, main_color)
 render_affordability(filtered_df, main_color)
@@ -1993,13 +2174,3 @@ render_data_browser(filtered_df, province_agg, quality, metadata, industry_df)
 
 # ---------------- 页脚 ----------------
 widgets.render_footer()
-
-
-
-
-
-
-
-
-
-
