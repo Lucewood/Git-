@@ -34,6 +34,7 @@
 │   └── city_insight/             # 业务包（可测试、可复用）
 │       ├── config.py             # 路径 / 常量 / 数据集列定义 / 环境变量配置
 │       ├── logging_setup.py      # 统一日志（控制台 + 滚动文件）
+│       ├── fonts.py              # 中文字体注册与解析（内置字体优先，防「方框」缺字）
 │       ├── data_loader.py        # CSV 加载 / 合并 / 派生指标 / 质量校验
 │       ├── analysis.py           # 纯函数分析逻辑（相关、异常值、聚合）
 │       ├── career.py             # 就业指导推荐引擎（五维加权打分与建议生成）
@@ -44,6 +45,7 @@
 │       ├── charts.py             # Matplotlib / Seaborn 图表工厂
 │       ├── widgets.py            # Streamlit UI 组件封装
 │       └── styles.py             # 页面 CSS
+├── assets/fonts/                 # 内置中文字体（Noto Sans SC + OFL 许可证）
 ├── data/                         # 数据文件 + metadata.json 数据字典
 │   ├── industry.csv              # 支柱产业与人才需求（爬虫产出）
 │   ├── raw/industry/*.html       # 区域统计快报页面快照（爬虫数据源）
@@ -53,7 +55,8 @@
 │   ├── crawl_industry.py         # 支柱产业爬虫管道（快照 + 抓取 + 解析 + 落库）
 │   ├── generate_population.py    # 人口数据生成（可复现）
 │   ├── generate_house_price_history.py  # 房价历史序列生成（可复现）
-│   └── generate_maps.py          # HTML 地图再生成
+│   ├── generate_maps.py          # HTML 地图再生成
+│   └── fetch_fonts.py            # 内置中文字体下载 / 校验
 ├── tests/                        # pytest 单元测试 + AppTest 端到端测试
 ├── .streamlit/config.toml        # Streamlit 服务配置
 ├── Dockerfile                    # 容器化部署
@@ -98,6 +101,7 @@ pytest -v
 - `tests/test_crawler.py`：爬虫抓取策略、双解析器回退、页面解析与清洗
 - `tests/test_career.py`：就业推荐打分、城市聚合、技能缺口、建议文本，以及缺列降级 / 缓存键 / 向量化等价性
 - `tests/test_industry_data.py`：支柱产业数据完整性 + 爬虫管道端到端复现校验
+- `tests/test_fonts.py`：中文字体注册 / 系统回退 / 缺字（方框）回归校验
 - `tests/test_streamlit_app.py`：基于 Streamlit AppTest 的无头端到端测试
 
 ---
@@ -192,6 +196,48 @@ python scripts/generate_maps.py         # 重新生成 HTML 地图
 docker build -t city-insight .
 docker run -p 8501:8501 city-insight
 ```
+
+---
+
+## 🈶 中文字体（图表中文显示为「方框 + 字」的修复说明）
+
+**现象**：应用部署到 Streamlit Community Cloud（或任何未安装中文字体的 Linux 环境）后，
+条形图 / 折线图 / 散点图等 matplotlib 图表的标题、坐标轴、刻度与图例里的中文
+显示成「一个方框里带一个字」的缺字占位（tofu）。
+
+**原因**：matplotlib 默认字体 `DejaVu Sans` 不含 CJK 字形。Windows / macOS 因系统自带
+中文字体（微软雅黑、苹方等）看不出问题，而 Linux 云服务器默认不安装中文字体，
+matplotlib 找不到中文字形，只能画占位方框。
+
+**修复**：把一份 OFL 授权的中文字体随代码一起部署，并在应用启动时注册给 matplotlib：
+
+1. `assets/fonts/NotoSansSC-Regular.otf`（Noto Sans SC，SIL OFL 1.1，来源与许可证见 `assets/fonts/README.md`）；
+2. `src/city_insight/fonts.py` 由 `charts.setup_plot_style()` 调用 `apply_cjk_font()`：
+   先用 `font_manager.addfont()` 注册内置字体，再按 `config.FONT_SANS` 的优先级
+   （内置字体 → 常见系统中文字体 → `DejaVu Sans`）写入 `font.sans-serif` 并关闭
+   `axes.unicode_minus`；
+3. 内置字体缺失时自动回退到系统中文字体；两者都没有才降级并写告警日志（含修复提示）。
+
+因此本应用**无需**在服务器上额外安装字体，也不依赖运行时联网，Windows / macOS / Linux
+渲染结果一致。
+
+**验证 / 排查**：
+
+```bash
+python scripts/fetch_fonts.py --check     # 查看内置字体是否就位、matplotlib 实际选用的字体
+python scripts/fetch_fonts.py --force     # 字体文件丢失时重新下载（jsDelivr 多镜像自动重试）
+python -m pytest tests/test_fonts.py -v   # 回归测试：只允许内置字体渲染中文，断言无缺字告警
+```
+
+**替代方案（仅在无法内置字体时才使用）**：在仓库根目录添加 `packages.txt`，
+让 Streamlit Community Cloud 在构建时安装系统中文字体（一行一个包名）：
+
+```
+fonts-noto-cjk
+```
+
+> ⚠️ `packages.txt` 安装失败会导致整个应用部署失败，且依赖镜像自带的软件源；
+> 本仓库默认用内置字体方案（零部署风险、离线可用），仅在特殊环境才需要上面的替代方案。
 
 ---
 

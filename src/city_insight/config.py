@@ -13,6 +13,8 @@ BASE_DIR: Path = Path(__file__).resolve().parent.parent.parent
 DATA_DIR: Path = BASE_DIR / "data"
 NOTEBOOKS_DIR: Path = BASE_DIR / "notebooks"  # pyecharts 生成的 HTML 地图
 LOG_DIR: Path = BASE_DIR / "logs"
+# 内置中文字体目录（随代码一起部署，由 city_insight.fonts 注册到 matplotlib）
+FONT_DIR: Path = BASE_DIR / "assets" / "fonts"
 RAW_DIR: Path = DATA_DIR / "raw"                                # 爬虫原始页面快照
 INDUSTRY_SNAPSHOT_DIR: Path = RAW_DIR / "industry"              # 支柱产业页面快照
 CRAWL_CACHE_DIR: Path = DATA_DIR / "crawl_cache"                # 爬虫响应缓存
@@ -83,12 +85,23 @@ METRIC_UNITS: dict[str, str] = {
 # ---------------------------------------------------------------------------
 # 绘图常量
 # ---------------------------------------------------------------------------
+# 中文字体候选（按优先级）：仓库内置字体 → 常见系统中文字体 → DejaVu 兜底。
+# 内置字体（assets/fonts/）由 city_insight.fonts 在启动时注册，确保在未安装中文
+# 字体的 Linux 服务器（Streamlit Community Cloud / python:*-slim 镜像）上，
+# 图表中的中文不会渲染成「方框 + 字」的缺字占位（tofu）。
 FONT_SANS: list[str] = [
-    "SimHei",
-    "Microsoft YaHei",
-    "PingFang SC",
-    "Noto Sans CJK SC",
-    "DejaVu Sans",
+    "Noto Sans SC",          # 仓库内置 assets/fonts/NotoSansSC-Regular.otf
+    "Noto Sans CJK SC",      # Linux: apt install fonts-noto-cjk
+    "Source Han Sans SC",    # Linux: apt install fonts-adobe-source-han-sans-cn
+    "WenQuanYi Zen Hei",     # Linux: apt install fonts-wqy-zenhei
+    "WenQuanYi Micro Hei",   # Linux: apt install fonts-wqy-microhei
+    "Microsoft YaHei",       # Windows
+    "SimHei",                # Windows
+    "PingFang SC",           # macOS
+    "Hiragino Sans GB",      # macOS
+    "Heiti SC",              # macOS
+    "Arial Unicode MS",
+    "DejaVu Sans",           # matplotlib 自带兜底（不含中文字形，仅供英文 / 数字）
 ]
 
 COLOR_MAPS: dict[str, str] = {

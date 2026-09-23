@@ -17,8 +17,8 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
+from . import fonts
 from .config import (
-    FONT_SANS,
     DANGER_COLOR,
     REG_COLOR,
     COLUMN_LABELS,
@@ -30,12 +30,13 @@ def setup_plot_style() -> None:
     """设置全局绘图风格与中文字体。
 
     注意：必须先调用 sns.set_style（它会重置 font.sans-serif 等 rcParams），
-    再设置中文字体，否则字体配置会被 seaborn 覆盖。
+    再设置中文字体，否则字体配置会被 seaborn 覆盖。中文字体的解析与注册交由
+    fonts.apply_cjk_font() 完成（仓库内置字体优先，其次系统中文字体），
+    确保在未安装中文字体的 Linux 服务器（如 Streamlit Community Cloud）上，
+    图表标题 / 坐标轴 / 刻度 / 图例的中文不会渲染成「方框」缺字占位。
     """
     sns.set_style("whitegrid", {"axes.grid": True, "grid.linestyle": "--", "grid.alpha": 0.3})
-    matplotlib.rcParams["font.family"] = "sans-serif"
-    matplotlib.rcParams["font.sans-serif"] = FONT_SANS
-    matplotlib.rcParams["axes.unicode_minus"] = False
+    fonts.apply_cjk_font()
 
 
 def _finalize(fig: plt.Figure, tight: bool = True) -> plt.Figure:
