@@ -130,15 +130,54 @@ def _stable_digest(text: str) -> str:
     return hashlib.md5(text.encode("utf-8")).hexdigest()[:16]
 
 
-def render_fig(fig: plt.Figure | None) -> None:
-    """渲染 matplotlib 图，并在 finally 中自动关闭 figure 释放内存。
+# st.pyplot 重绘 figure 时固定使用的 dpi（streamlit/elements/pyplot.py）
+_STREAMLIT_SAVE_DPI = 200
 
-    即使 st.pyplot 抛出异常也会执行 plt.close(fig)，防止句柄泄漏。
+# Streamlit 下发图片时允许的最大宽度（streamlit.elements.lib.image_utils
+# .MAXIMUM_CONTENT_WIDTH，1.58 版为 2 × 730 = 1460 px）；取不到时用同一数值兜底。
+try:  # pragma: no cover - 仅随 Streamlit 版本变化
+    from streamlit.elements.lib.image_utils import (
+        MAXIMUM_CONTENT_WIDTH as _MAX_CONTENT_WIDTH,
+    )
+except Exception:  # noqa: BLE001 - 取不到时退化为固定值，渲染逻辑不受影响
+    _MAX_CONTENT_WIDTH = 1460
+
+
+def _display_dpi(fig: plt.Figure) -> int:
+    """按 Streamlit 实际下发的宽度反推重绘 dpi，省掉一次缩放与重编码。
+
+    st.pyplot 会以 dpi=200 重新保存 figure，随后 image_utils 把宽度超过
+    MAXIMUM_CONTENT_WIDTH 的图片缩放回该宽度再下发。对宽图（figwidth 超过
+    约 7.3 英寸）而言，「200 dpi 渲染 → 解码 → 双线性缩放 → 重新编码 PNG」
+    这一圈纯属浪费：直接按目标宽度渲染得到的像素几乎一致（实测每张宽图省
+    约 70 ms），而且少了缩放插值带来的模糊。
+
+    窄图在 200 dpi 下本就不超限，返回 200 保持原状；tight bbox 可能略宽于
+    画布，因此留 2% 余量，宁可少一点像素也不要触发缩放。
+    """
+    try:
+        width_in = float(fig.get_figwidth())
+    except Exception:  # noqa: BLE001 - 取不到画布尺寸时退回默认 dpi
+        return _STREAMLIT_SAVE_DPI
+    if not math.isfinite(width_in) or width_in <= 0:
+        return _STREAMLIT_SAVE_DPI
+    dpi = int(_MAX_CONTENT_WIDTH * 0.98 / width_in)
+    return max(72, min(_STREAMLIT_SAVE_DPI, dpi))
+
+
+def render_fig(fig: plt.Figure | None) -> None:
+    """渲染 matplotlib 图（按下发宽度取 dpi），并在 finally 中关闭 figure。
+
+    即使 st.pyplot 抛出异常也会执行 plt.close(fig)，防止句柄泄漏；
+    单张图渲染失败只降级为提示文案，不让整页因此中断。
     """
     if fig is None:
         return
     try:
-        st.pyplot(fig)
+        st.pyplot(fig, dpi=_display_dpi(fig))
+    except Exception:  # noqa: BLE001 - 图表属展示层，失败降级即可
+        logger.exception("图表渲染失败，已跳过该图。")
+        st.caption("⚠️ 该图表渲染失败，已跳过（详细原因见运行日志）。")
     finally:
         plt.close(fig)
 
@@ -349,6 +388,45 @@ def _load_forecast_pipeline(
     return forecast.build_pipeline(history, cross_df)
 
 
+def _forecast_signature() -> tuple[tuple[str, int, int], ...]:
+    """房价预测相关缓存的统一签名（历史 / 快照文件变化即整体失效）。
+
+    与 _load_forecast_pipeline 使用同一份签名，避免出现「流水线已失效、
+    但城市级结果仍在命中旧缓存」的不一致。
+    """
+    return data_loader.data_signature(DATA_DIR, (forecast.HISTORY_FILE,))
+
+
+@st.cache_data(show_spinner=False, max_entries=16)
+def _forecast_city_cached(
+    signature: tuple, city: str, horizon: int, macro_adj: float | None
+) -> dict:
+    """缓存单城市递归预测结果（签名 / 城市 / 预测年数 / 宏观情景变化时失效）。
+
+    递归预测每次都要重算全国涨幅动量并滚动外推，且与筛选、配色等控件无关；
+    缓存后调整其它控件不再重复计算。流水线本身由 _load_forecast_pipeline
+    （cache_resource）持有，这里只把体积很小的结果放进 cache_data。
+    """
+    pipeline = _load_forecast_pipeline(signature, DATA_DIR)
+    return forecast.forecast_city(
+        pipeline, city, horizon=horizon, macro_adj=macro_adj
+    )
+
+
+@st.cache_data(show_spinner=False, max_entries=16)
+def _city_backtest_cached(signature: tuple, city: str) -> pd.DataFrame:
+    """缓存单城市 walk-forward 外样本回测结果（逐年重训外推，价格较高）。"""
+    pipeline = _load_forecast_pipeline(signature, DATA_DIR)
+    return forecast.city_backtest(pipeline, city)
+
+
+@st.cache_data(show_spinner=False, max_entries=16)
+def _city_history_stats_cached(signature: tuple, city: str) -> dict | None:
+    """缓存单城市历史回顾统计（起始价 / 各期 CAGR / 波动率）。"""
+    pipeline = _load_forecast_pipeline(signature, DATA_DIR)
+    return forecast.city_history_stats(pipeline["history"], city)
+
+
 # 预测明细 / 回测 / 逐年验证表的列名与格式（集中管理，避免列名漂移）
 FC_DETAIL_COLUMNS: tuple[str, ...] = (
     "年份", "预测房价", "区间下限", "区间上限", "同比涨幅",
@@ -422,6 +500,22 @@ def _rename_columns_exact(
     renamed = frame.copy()
     renamed.columns = list(names)
     return renamed
+
+
+def _abs_error_series(backtest: pd.DataFrame) -> pd.Series:
+    """回测相对误差的绝对值序列；列缺失 / 非数值时返回空序列而非标量。
+
+    pd.to_numeric(None, errors="coerce") 返回 np.float64(nan) 这类「标量」，
+    直接调用 .abs() 会抛 AttributeError 把整页打断；这里统一收敛成 Series，
+    空序列经 _num_text 显示为「—」，指标卡片照常渲染。
+    """
+    if "error_pct" not in backtest.columns:
+        logger.warning("回测结果缺少 error_pct 字段，误差指标已跳过。")
+        return pd.Series(dtype="float64")
+    values = pd.to_numeric(backtest["error_pct"], errors="coerce")
+    if not isinstance(values, pd.Series):  # pragma: no cover - 兜底
+        return pd.Series(dtype="float64")
+    return values.abs()
 
 
 # ===========================================================================
@@ -654,11 +748,10 @@ def render_forecast(
         )
 
     # 构建 / 训练预测流水线（模型跨 rerun 缓存，仅在数据变化时重训）
+    fc_sig = _forecast_signature()
     pipeline: dict | None = None
     try:
-        pipeline = _load_forecast_pipeline(
-            data_loader.data_signature(DATA_DIR, (forecast.HISTORY_FILE,)), DATA_DIR
-        )
+        pipeline = _load_forecast_pipeline(fc_sig, DATA_DIR)
     except Exception as exc:  # noqa: BLE001 - 外部数据 / 训练环节异常均只降级提示
         logger.exception("房价预测流水线构建失败")
         st.warning(
@@ -730,22 +823,23 @@ def render_forecast(
             f"方向命中率 {_num_text(fc_metrics.get('hit_rate'), '{:.0%}')}"
         )
 
-    # 递归预测（单城市失败不中断整页）
+    # 递归预测（单城市失败不中断整页；结果按「签名 + 城市 + 年数 + 情景」缓存）
     fc = None
     try:
-        fc = forecast.forecast_city(
-            pipeline, fc_city, horizon=int(fc_horizon), macro_adj=fc_macro_adj
-        )
+        fc = _forecast_city_cached(fc_sig, fc_city, int(fc_horizon), fc_macro_adj)
     except Exception as exc:  # noqa: BLE001 - 预测失败仅提示并记录日志
         logger.exception("城市「%s」房价预测失败", fc_city)
         st.warning(f"城市「{fc_city}」预测失败：{exc}")
 
     if fc is None:
         return
+    # 缓存拿到的对象只做只读使用：显式复制后再补充展示字段，避免污染缓存内容
+    fc = dict(fc)
     fc["macro_adj"] = fc_macro_adj
     fc["scenario_label"] = fc_scenario_label
     _render_forecast_result(fc, fc_city, fc_horizon, artifacts, pipeline, main_color)
     _render_forecast_validation(pipeline, fc_city, main_color)
+
 
 def _render_forecast_result(
     fc: dict,
@@ -757,8 +851,8 @@ def _render_forecast_result(
 ) -> None:
     """渲染单城市预测结果（KPI、走势图、特征重要性、逐年明细表）。"""
     try:
-        hist_stats = forecast.city_history_stats(pipeline["history"], fc_city)
-    except ValueError as exc:
+        hist_stats = _city_history_stats_cached(_forecast_signature(), fc_city)
+    except Exception as exc:  # noqa: BLE001 - 历史统计属增强信息，失败只降级
         logger.warning("城市历史回顾统计失败：%s", exc)
         hist_stats = None
     fc_last_year = int(fc["forecast"]["year"].iloc[-1])
@@ -847,7 +941,8 @@ def _render_forecast_result(
             st.info("本次流水线未产出特征重要性数据（可能是旧版工件）。")
 
     def _fmt_pct(value: float | None) -> str:
-        return "—" if value is None else f"{value * 100:+.1f}%"
+        """百分比文本（如 +3.2%）；None / NaN 等缺失值统一显示 —。"""
+        return _num_text(value, "{:+.1%}")
 
     fc_review, fc_detail = st.columns([1, 1.25])
     with fc_review:
@@ -938,13 +1033,14 @@ def _render_forecast_validation(
 
         st.markdown(f"#### 🧭 「{fc_city}」逐年外样本回测（预测 vs 实际）")
         try:
-            bt = forecast.city_backtest(pipeline, fc_city)
+            # 逐年重训外推代价较高，按「签名 + 城市」缓存复用
+            bt = _city_backtest_cached(_forecast_signature(), fc_city)
         except Exception as exc:  # noqa: BLE001 - 回测属增强信息，失败不影响主结论
             logger.warning("城市「%s」外样本回测不可用：%s", fc_city, exc)
             st.info(f"该城市暂无可用的回测结果：{exc}")
             return
 
-        error_abs = pd.to_numeric(bt.get("error_pct"), errors="coerce").abs()
+        error_abs = _abs_error_series(bt)
         v_col1, v_col2, v_col3 = st.columns(3)
         v_col1.metric("回测年份数", f"{len(bt)} 年")
         v_col2.metric("平均绝对相对误差", _num_text(error_abs.mean(), "{:.1f}%"))
@@ -1010,7 +1106,8 @@ def render_happiness_ranking(
         render_fig(fig)
 
     with table_col:
-        st.markdown(f"#### 📋 幸福度排名表（{rank_direction[:6]} {n_cities}）")
+        direction_label = "Bottom" if ascending else "Top"
+        st.markdown(f"#### 📋 幸福度排名表（{direction_label} {n_cities}）")
         st.dataframe(
             _styled_table(
                 top_n_happy.sort_values("happiness", ascending=False),
