@@ -15,6 +15,12 @@ _SRC = Path(__file__).resolve().parent
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
+from city_insight.mpl_bootstrap import ensure_mpl_config_dir
+
+# 必须在 import matplotlib 之前准备可写的字体缓存目录
+# （Streamlit Cloud / 只读容器中 HOME 可能不可写）
+ensure_mpl_config_dir()
+
 import matplotlib
 
 matplotlib.use("Agg")  # 必须在导入 pyplot 之前设置，规避 GUI 后端
@@ -30,7 +36,9 @@ from city_insight import (
     career,
     charts,
     data_loader,
+    fonts,
     forecast,
+    rendering,
     widgets,
 )
 from city_insight.config import (
@@ -65,6 +73,18 @@ st.set_page_config(
 
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 charts.setup_plot_style()
+
+# 字体自检：确认选中的字体文件真的包含中文字形（避免云端静默显示方框）
+_FONT_STATUS = fonts.font_report()
+if _FONT_STATUS["ok"]:
+    logger.info(
+        "图表中文字体自检通过：%s（%s）",
+        _FONT_STATUS["family"],
+        _FONT_STATUS["path"],
+    )
+else:
+    logger.warning("图表中文字体自检未通过：%s", _FONT_STATUS)
+
 
 # 城市级表格列格式（键 = COLUMN_LABELS 中文列名），供 _styled_table 统一使用
 TABLE_FORMAT: dict[str, str] = {
@@ -140,54 +160,29 @@ def _stable_digest(text: str) -> str:
     return hashlib.md5(text.encode("utf-8")).hexdigest()[:16]
 
 
-# st.pyplot 重绘 figure 时固定使用的 dpi（streamlit/elements/pyplot.py）
-_STREAMLIT_SAVE_DPI = 200
-
-# Streamlit 下发图片时允许的最大宽度（streamlit.elements.lib.image_utils
-# .MAXIMUM_CONTENT_WIDTH，1.58 版为 2 × 730 = 1460 px）；取不到时用同一数值兜底。
-try:  # pragma: no cover - 仅随 Streamlit 版本变化
-    from streamlit.elements.lib.image_utils import (
-        MAXIMUM_CONTENT_WIDTH as _MAX_CONTENT_WIDTH,
-    )
-except Exception:  # noqa: BLE001 - 取不到时退化为固定值，渲染逻辑不受影响
-    _MAX_CONTENT_WIDTH = 1460
-
-
-def _display_dpi(fig: plt.Figure) -> int:
-    """按 Streamlit 实际下发的宽度反推重绘 dpi，省掉一次缩放与重编码。
-
-    st.pyplot 会以 dpi=200 重新保存 figure，随后 image_utils 把宽度超过
-    MAXIMUM_CONTENT_WIDTH 的图片缩放回该宽度再下发。对宽图（figwidth 超过
-    约 7.3 英寸）而言，「200 dpi 渲染 → 解码 → 双线性缩放 → 重新编码 PNG」
-    这一圈纯属浪费：直接按目标宽度渲染得到的像素几乎一致（实测每张宽图省
-    约 70 ms），而且少了缩放插值带来的模糊。
-
-    窄图在 200 dpi 下本就不超限，返回 200 保持原状；tight bbox 可能略宽于
-    画布，因此留 2% 余量，宁可少一点像素也不要触发缩放。
-    """
-    try:
-        width_in = float(fig.get_figwidth())
-    except Exception:  # noqa: BLE001 - 取不到画布尺寸时退回默认 dpi
-        return _STREAMLIT_SAVE_DPI
-    if not math.isfinite(width_in) or width_in <= 0:
-        return _STREAMLIT_SAVE_DPI
-    dpi = int(_MAX_CONTENT_WIDTH * 0.98 / width_in)
-    return max(72, min(_STREAMLIT_SAVE_DPI, dpi))
+# 图表下发 dpi / 最大宽度的计算已迁移到 city_insight.rendering（可单测）
 
 
 def render_fig(fig: plt.Figure | None) -> None:
-    """渲染 matplotlib 图（按下发宽度取 dpi），并在 finally 中关闭 figure。
+    """渲染 matplotlib 图：自行光栅化为 PNG 后交给 st.image 下发。
 
-    即使 st.pyplot 抛出异常也会执行 plt.close(fig)，防止句柄泄漏；
-    单张图渲染失败只降级为提示文案，不让整页因此中断。
+    相比直接 ``st.pyplot(fig)``：
+
+    - 渲染 dpi 由 ``rendering.display_dpi`` 精确控制，避免二次缩放；
+    - 缺字（Glyph missing from font）等告警会写入运行日志，便于定位云端字体问题；
+    - 失败时显示真实异常类型与信息，而不是只留一块空白。
+
+    无论成功失败都会在 finally 中关闭 figure，防止句柄泄漏；单张图渲染失败
+    只降级为提示文案，不让整页因此中断。
     """
     if fig is None:
         return
     try:
-        st.pyplot(fig, dpi=_display_dpi(fig))
-    except Exception:  # noqa: BLE001 - 图表属展示层，失败降级即可
+        png = rendering.figure_png_bytes(fig)
+        st.image(png, width="stretch")
+    except Exception as exc:  # noqa: BLE001 - 图表属展示层，失败降级即可
         logger.exception("图表渲染失败，已跳过该图。")
-        st.caption("⚠️ 该图表渲染失败，已跳过（详细原因见运行日志）。")
+        st.warning(f"⚠️ 该图表渲染失败：{type(exc).__name__}: {exc}")
     finally:
         plt.close(fig)
 
@@ -2587,6 +2582,20 @@ with st.sidebar:
     main_color = COLOR_MAPS[chart_theme]
 
     show_maps = st.toggle("显示地理地图（HTML 组件）", value=True, key="toggle_maps")
+
+    if not _FONT_STATUS["ok"]:
+        st.markdown("---")
+        st.warning(
+            "⚠️ 图表中文字体未正确加载，图表标题 / 刻度可能显示为方框。"
+            "请确认 `assets/fonts/` 已随代码部署，或查看下方自检详情。"
+        )
+        with st.expander("🩺 字体自检详情", expanded=False):
+            st.json(_FONT_STATUS)
+            st.caption(
+                "部署排查：确认云端运行的提交包含 assets/fonts/NotoSansSC-Regular.otf，"
+                "然后在 Streamlit Cloud 控制台 Reboot app（必要时 Clear cache）。"
+            )
+
 
 # ---------------- 数据筛选 ----------------
 mask = pd.Series(True, index=df.index)

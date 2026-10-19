@@ -1,12 +1,17 @@
 """图表工厂：所有绘图函数返回 matplotlib Figure 对象（纯渲染，无 UI 依赖）。
 
 约定：
-- 返回的 figure 已执行 tight_layout（除非显式关闭），可直接 st.pyplot(fig)；
+- 返回的 figure 已执行 tight_layout（除非显式关闭），由调用方光栅化 / 下发；
 - 调用方负责 plt.close(fig) 释放内存；
 - 中文字体 / 风格在 setup_plot_style() 中统一配置。
 """
 
 from __future__ import annotations
+
+from .mpl_bootstrap import ensure_mpl_config_dir
+
+# 必须在 import matplotlib 之前准备可写配置目录（云端 / 只读容器兜底）
+ensure_mpl_config_dir()
 
 import matplotlib
 

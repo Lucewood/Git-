@@ -3,7 +3,9 @@
 模块职责划分：
 - config:         全局配置（路径、常量、数据集列定义、颜色主题、环境变量设置）
 - logging_setup:  统一日志配置（控制台 + 滚动文件）
-- fonts:          中文字体注册与解析（内置字体优先，修复 Linux 部署缺字方框）
+- fonts:          中文字体注册与解析（内置字体优先，并按字形校验防「方框」缺字）
+- mpl_bootstrap:  在导入 matplotlib 前确保配置 / 字体缓存目录可写（只读容器兜底）
+- rendering:      Figure → PNG 光栅化（dpi 控制、缺字告警，供 st.image 下发）
 - data_loader:    CSV 加载 / 合并 / 派生指标计算 / 数据质量校验
 - analysis:       核心分析逻辑（纯函数，便于单元测试）
 - career:         就业指导推荐引擎（技能 / 薪资 / 景气 / 规模 / 宜居五维打分）
