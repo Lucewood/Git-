@@ -796,6 +796,7 @@ def _render_ai_facts(context: ai_advisor.CityContext) -> None:
             "🏗️ 90㎡总价", _cny_text(housing.get("total_price")),
             sub=f"首付30% {_cny_text(housing.get('down_payment'))}",
         )
+    ratio = housing.get("mortgage_income_ratio")
     try:
         ratio_value = float(ratio)
     except (TypeError, ValueError):

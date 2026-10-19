@@ -198,6 +198,58 @@ def test_career_recommendation_follows_sidebar_filter():
     assert _card_value(at, "🎯 首选城市") in {"海口", "三亚", "儋州"}
 
 
+def test_ai_advisor_result_renders_without_exception(monkeypatch):
+    """AI 顾问提交后应完整渲染本地事实 + 模型文本（回归：ratio 未赋值 NameError）。"""
+    import json
+
+    from city_insight import ai_advisor
+
+    class _FakeResponse:
+        def __init__(self, payload: dict) -> None:
+            self._payload = payload
+
+        def read(self) -> bytes:
+            return json.dumps(self._payload, ensure_ascii=False).encode("utf-8")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def _fake_urlopen(request, timeout):
+        return _FakeResponse(
+            {
+                "model": "deepseek-flash",
+                "choices": [
+                    {
+                        "message": {"content": "### 一句话结论\n测试结论"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 30,
+                    "total_tokens": 130,
+                    "prompt_cache_hit_tokens": 10,
+                },
+            }
+        )
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test-1234567890abcdef")
+    monkeypatch.setattr(ai_advisor, "_urlopen", _fake_urlopen)
+
+    at = _build_app()
+    at.run()
+    submit = next(b for b in at.button if b.label.startswith("✨"))
+    submit.click().run()
+
+    assert not at.exception, f"AI 顾问结果渲染抛出了异常: {at.exception}"
+    values = [m.value or "" for m in at.markdown]
+    assert any("AI 生活成本解读与建议" in value for value in values)
+    assert any("测试结论" in value for value in values)
+
+
 def test_career_section_blocks_render_once():
     """就业指导区块的说明面板、明细表与导出按钮不应重复渲染。"""
     at = _build_app()
