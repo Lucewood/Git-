@@ -66,7 +66,6 @@
 ├── .streamlit/config.toml        # Streamlit 服务配置
 ├── .streamlit/secrets.toml.example # API 密钥配置模板（复制为 secrets.toml）
 ├── Dockerfile                    # 容器化部署
-├── packages.txt                  # Streamlit Cloud 系统依赖（中文字体兜底）
 └── requirements*.txt             # 依赖锁定
 ```
 
@@ -305,8 +304,11 @@ matplotlib 找不到中文字形，只能画占位方框。
    兼容只读 HOME / 只读容器（字体缓存写不进去时可自动改到临时目录）。
 
 因此本应用**无需**在服务器上额外安装字体，也不依赖运行时联网，Windows / macOS / Linux
-渲染结果一致。`packages.txt` 额外声明了系统字体包 `fonts-noto-cjk` 作为兜底：
-即使内置字体文件因特殊原因未被部署 / 注册，Linux 上仍有系统中文字体可用。
+渲染结果一致。仓库刻意**不包含** `packages.txt`：在 Streamlit Community Cloud 上，
+`packages.txt` 的 apt 安装失败会直接导致整个应用部署失败
+（`installer returned a non-zero exit code` / `Error during processing dependencies`），
+而内置字体方案已能覆盖云端缺字场景。若确需系统字体，请自行添加并先确认镜像源可用。
+
 
 **验证 / 排查**：
 
@@ -318,6 +320,10 @@ python -m pytest tests/test_fonts.py tests/test_rendering.py -v   # 字体 + PNG
 
 **Streamlit Community Cloud 上仍然显示异常时，按顺序检查**：
 
+0. 若 `Manage app` 显示 `installer returned a non-zero exit code` /
+   `Error during processing dependencies`，属于**依赖安装失败**，与图表代码无关：
+   确认仓库根目录没有 `packages.txt`（本仓库不包含），并检查 `requirements.txt`
+   中的版本能否在该 Python 版本下安装；
 1. 云端运行的提交是否包含字体：仓库里 `assets/fonts/NotoSansSC-Regular.otf` 应约 8 MB，
    且 `git ls-files assets/fonts` 能列出它（不能是 Git LFS 指针文件）；
 2. Cloud 控制台 → 应用右下角 `Manage app` → **Reboot app**（必要时 `Clear cache`）；

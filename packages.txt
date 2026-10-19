@@ -1,7 +1,0 @@
-# Streamlit Community Cloud / Debian 构建时安装的系统依赖（一行一个包名）。
-#
-# fonts-noto-cjk：Linux 服务器（Streamlit Cloud、python:*-slim 等）通常不带中文字体，
-# 这里安装系统级 Noto CJK 作为兜底；应用仍优先使用仓库内置的
-# assets/fonts/NotoSansSC-Regular.otf（离线可用、版本固定）。
-# 若某个镜像源不提供该包导致构建失败，可删除本文件，内置字体方案本身即可工作。
-fonts-noto-cjk
