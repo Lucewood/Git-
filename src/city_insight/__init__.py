@@ -12,6 +12,8 @@
 - industry_kb:    行业知识库（行业大类 / 薪资基准 / 学历门槛 / 核心技能 / 典型岗位）
 - industry_seed:  支柱产业数据源种子（区域划分、省份产业池、确定性记录生成）
 - forecast:       房价历史加载、特征工程与机器学习预测（纯函数）
+- api_config:     API 密钥读取（Streamlit secrets / 环境变量，输出脱敏状态）
+- ai_advisor:     本地城市检索 + 压缩上下文 + DeepSeek Chat Completions 客户端
 - widgets:        Streamlit UI 组件封装（指标卡片、滑块、表格格式化）
 - styles:         页面自定义 CSS
 

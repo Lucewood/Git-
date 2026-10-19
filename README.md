@@ -12,6 +12,7 @@
 | --- | --- |
 | 📈 核心指标关联分析 | 收入/房价 vs 幸福度散点 + 回归线、全指标相关性热力图、指标分布 |
 | 🔬 城市对比与画像 | 多城市多指标对比图、单城市指标百分位画像 |
+| 🤖 **AI 城市生活成本顾问** | 根据收入、家庭人口、住房状态与生活优先级，**本地检索并计算**城市指标 / 百分位 / 住房情景 / 可替代城市，再调用 **DeepSeek** 生成生活成本解读与建议；仅在点击时调用、压缩上下文、会话缓存、密钥脱敏，详见下方「AI 城市生活成本顾问」 |
 | 🤖 房价趋势分析与预测 | 选定城市后基于 2005–2024 年历史序列 + 全样本梯度提升模型递归预测房价趋势（含置信区间与特征重要性） |
 | 😊 幸福度排名 | Top/Bottom N 排名（条形图 + 表格） |
 | 🏠 住房可负担性分析 | 可负担指数 = 年收入 ÷ 房价，全量分布 + 阈值参考线 |
@@ -42,6 +43,8 @@
 │       ├── industry_kb.py        # 行业知识库（16 个行业大类的技能与岗位口径）
 │       ├── industry_seed.py      # 支柱产业数据源种子（确定性可复现）
 │       ├── forecast.py           # 房价历史 + 特征工程 + 机器学习预测
+│       ├── api_config.py         # Streamlit secrets / 环境变量 → API 凭证（脱敏）
+│       ├── ai_advisor.py         # 本地城市检索 + DeepSeek 提示词与 Chat 客户端
 │       ├── charts.py             # Matplotlib / Seaborn 图表工厂
 │       ├── widgets.py            # Streamlit UI 组件封装
 │       └── styles.py             # 页面 CSS
@@ -59,6 +62,7 @@
 │   └── fetch_fonts.py            # 内置中文字体下载 / 校验
 ├── tests/                        # pytest 单元测试 + AppTest 端到端测试
 ├── .streamlit/config.toml        # Streamlit 服务配置
+├── .streamlit/secrets.toml.example # API 密钥配置模板（复制为 secrets.toml）
 ├── Dockerfile                    # 容器化部署
 └── requirements*.txt             # 依赖锁定
 ```
@@ -87,6 +91,75 @@ streamlit run src/streamlit_app.py
 
 ---
 
+## 🤖 AI 城市生活成本顾问（DeepSeek）
+
+页面中的「🤖 AI 城市生活成本顾问」会在**本地**完成城市检索与确定性计算，再把压缩后的事实
+交给 DeepSeek 生成解读与建议。它不会把 248 行原始数据、整张产业表或 API 密钥送进模型。
+
+### 1. 配置密钥（三种方式，优先级从高到低）
+
+**推荐：Streamlit secrets。** 复制模板并填入真实密钥：
+
+```bash
+cp .streamlit/secrets.toml.example .streamlit/secrets.toml
+```
+
+```toml
+[api]
+provider = "deepseek"
+
+[api.deepseek]
+api_key = "sk-你的真实密钥"
+base_url = "https://api.deepseek.com/v1"
+# 2026 当前模型；旧版 API 账号可改为 "deepseek-chat" / "deepseek-reasoner"
+model = "deepseek-flash"
+timeout = 30.0
+enabled = true
+```
+
+- **本地 / 自建服务器**：修改 `.streamlit/secrets.toml` 后重启 `streamlit run`；
+- **Streamlit Community Cloud**：应用页 → `Settings` → `Secrets`，粘贴上面的 TOML；
+- **环境变量兜底**（本地开发 / CI / Docker）：`DEEPSEEK_API_KEY=sk-...`，也支持通用名
+  `API_KEY`（服务专属名优先）。
+
+也支持以下 secrets 写法：`[api]` 单服务小节、顶层 `DEEPSEEK_API_KEY = "sk-..."`。
+读取逻辑在 `src/city_insight/api_config.py`，任何缺失 / 语法错误 / 类型非法都会降级为
+「未配置」，不会让页面崩溃。
+
+### 2. 安全与密钥保护
+
+- `secrets.toml` 已加入 `.gitignore`，不会进入版本库；
+- 页面只展示 `masked_key`（例如 `sk-abc********1234`），完整密钥不会出现在页面、日志、
+  导出文件或提示词中；
+- 请求头 `Authorization: Bearer ...` 在服务端构造，浏览器端拿不到密钥；
+- 错误信息会先用密钥做脱敏替换，再展示给用户；
+- 请求仅包含城市事实、收入 / 偏好摘要与补充要求，不含姓名等身份信息；请勿在补充要求中填写身份证、手机号等敏感信息。
+
+### 3. 成本与效率控制
+
+| 措施 | 说明 |
+| --- | --- |
+| 只在点击时调用 | 表单提交按钮触发，页面 rerun / 切换控件**不会**自动调用 API |
+| 本地检索优先 | 城市指标、百分位、全国 / 本省参照、90㎡ 月供、替代城市全部本地计算 |
+| 上下文压缩 | 只发送目标城市 + 3 个替代城市 + TOP3 支柱产业，硬上限 2800 字符 |
+| 固定系统提示词 | 放在消息最前，便于 DeepSeek 前缀缓存复用，降低重复提示费用 |
+| 单轮对话 | 不携带历史消息，避免 token 随轮次累积 |
+| 输出上限 | 普通模式默认 800 tokens；深度思考默认 1200 tokens |
+| 会话缓存 | 相同城市 / 画像 / 模型 / 提示词版本直接复用结果，不重复计费（最多 8 条） |
+| 默认关闭 thinking | 2026 当前模型（`deepseek-flash`）默认开启 thinking，本应用显式传 `thinking.type = "disabled"`；需要更长的内部推理时再手动开启（更慢、费用更高） |
+| 旧版兼容 | 若 secrets 配置 `model = "deepseek-chat"`，深度思考会自动使用 `deepseek-reasoner`；也可直接配置 `deepseek-v4-pro` |
+
+### 4. 准确性边界
+
+- 提示词明确要求「只依据给定数据、不得编造房租 / 物价 / 政策 / 学校 / 医院 / 通勤」；
+- 页面同时展示**本地确定性指标卡片与事实表**，AI 文本只是解释层；
+- 本项目数据不含房租、通勤、教育、医疗、气候等细项，模型会标注「数据未覆盖」并给出
+  核实渠道；实际决策请以当地官方 / 实际口径为准；
+- 常见错误会转为可行动提示：401 密钥无效、402 余额不足、429 限流、5xx 服务不可用、
+  网络超时等。
+
+---
+
 ## 🧪 测试
 
 ```bash
@@ -102,6 +175,8 @@ pytest -v
 - `tests/test_career.py`：就业推荐打分、城市聚合、技能缺口、建议文本，以及缺列降级 / 缓存键 / 向量化等价性
 - `tests/test_industry_data.py`：支柱产业数据完整性 + 爬虫管道端到端复现校验
 - `tests/test_fonts.py`：中文字体注册 / 系统回退 / 缺字（方框）回归校验
+- `tests/test_api_config.py`：secrets 优先级 / 环境变量兜底 / 密钥脱敏 / 配置模板有效性
+- `tests/test_ai_advisor.py`：本地上下文压缩、提示词注入防护、DeepSeek 请求构造与错误转译（全部使用假响应，不需要真实密钥）
 - `tests/test_streamlit_app.py`：基于 Streamlit AppTest 的无头端到端测试
 
 ---
@@ -257,6 +332,12 @@ fonts-noto-cjk
 | `MAX_CAREER_RESULTS` | `30` | 就业推荐最多可展示条数 |
 | `CRAWL_DELAY` | `1.0` | 爬虫同域请求最小间隔（秒） |
 | `CRAWL_TIMEOUT` | `10.0` | 爬虫单次请求超时（秒） |
+| `DEEPSEEK_API_KEY` | 空 | DeepSeek 密钥（优先使用 Streamlit secrets；环境变量仅作兜底） |
+| `DEEPSEEK_BASE_URL` | `https://api.deepseek.com/v1` | DeepSeek 接入点 |
+| `DEEPSEEK_MODEL` | `deepseek-flash` | DeepSeek 模型（旧版可用 `deepseek-chat` / `deepseek-reasoner`） |
+| `DEEPSEEK_TIMEOUT` | `30` | 单次请求超时（秒）；深度思考自动提升到至少 90 秒 |
+| `API_KEY` | 空 | 通用密钥（服务专属名优先；不建议在共享环境使用） |
+| `API_PROVIDER` | `openai` | 默认服务标识；AI 顾问固定读取 `deepseek` |
 
 ---
 

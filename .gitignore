@@ -14,6 +14,8 @@ data/crawl_cache/
 # 环境与密钥
 .env
 .env.local
+# Streamlit 后台密钥（严禁提交；模板见 .streamlit/secrets.toml.example）
+.streamlit/secrets.toml
 
 # 编辑器
 .vscode/

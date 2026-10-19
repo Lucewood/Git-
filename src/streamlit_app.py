@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from dataclasses import replace
 import math
 import os
 import sys
@@ -22,7 +23,16 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
 
-from city_insight import analysis, career, charts, data_loader, forecast, widgets
+from city_insight import (
+    ai_advisor,
+    analysis,
+    api_config,
+    career,
+    charts,
+    data_loader,
+    forecast,
+    widgets,
+)
 from city_insight.config import (
     APP_NAME,
     APP_VERSION,
@@ -717,6 +727,383 @@ def _render_city_profile(
             ],
         })
         st.dataframe(detail, hide_index=True, width="stretch")
+
+# ===========================================================================
+# AI 城市生活成本顾问（DeepSeek）
+# ===========================================================================
+# 会话缓存上限：同一浏览器会话最多保留 8 次结果，避免 long-running 会话内存膨胀。
+AI_CACHE_LIMIT = 8
+AI_LAST_KEY = "ai_advisor_last"
+AI_CACHE_KEY = "ai_advisor_cache"
+
+def _render_ai_status(creds: api_config.ApiCredentials) -> None:
+    """渲染密钥状态（只展示脱敏密钥，绝不回显完整 key）。"""
+    if creds.usable:
+        st.markdown(
+            f"🔐 **{creds.label}** · 密钥来源：{creds.source_label} · "
+            f"密钥：`{creds.masked_key}` · "
+            f"模型：`{creds.model or ai_advisor.CHAT_MODEL}` · "
+            f"超时：{creds.timeout:.0f}s"
+        )
+        return
+
+    if creds.configured and not creds.enabled:
+        st.warning(
+            "已读取到 DeepSeek 密钥，但配置中 `enabled = false` 已关闭调用；"
+            "将其改为 `true` 后重启应用即可启用。"
+        )
+        return
+
+    st.warning(
+        "未检测到可用的 DeepSeek API 密钥（未配置），AI 顾问功能暂不可用；"
+        "其余分析功能不受影响。"
+    )
+    with st.expander("🔧 如何配置 DeepSeek API 密钥（Streamlit secrets）", expanded=False):
+        st.markdown(api_config.api_setup_hint("deepseek"))
+
+
+def _render_ai_facts(context: ai_advisor.CityContext) -> None:
+    """展示本地确定性事实（AI 只基于这些数据推理，避免用户只信模型）。"""
+    facts = context.facts or {}
+    metrics = facts.get("metrics") or {}
+    pcts = facts.get("percentiles") or {}
+    national = facts.get("national") or {}
+    housing = facts.get("housing") or {}
+    monthly_income = facts.get("monthly_income")
+    city = context.city
+    province = context.province
+
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    with c1:
+        widgets.metric_card("🏙️ 分析城市", city, sub=province or "—")
+    with c2:
+        widgets.metric_card(
+            "😊 幸福度", _num_text(metrics.get("happiness"), "{:.1f}"),
+            sub=f"全国 P{_num_text(pcts.get('happiness'), '{:.0f}')}",
+        )
+    with c3:
+        widgets.metric_card(
+            "💰 年收入", _cny_text(metrics.get("income")),
+            sub=f"全国 P{_num_text(pcts.get('income'), '{:.0f}')}",
+        )
+    with c4:
+        widgets.metric_card(
+            "🏠 房价", _cny_text(metrics.get("house_price")),
+            sub=f"全国 P{_num_text(pcts.get('house_price'), '{:.0f}')}",
+        )
+    with c5:
+        widgets.metric_card(
+            "🏗️ 90㎡总价", _cny_text(housing.get("total_price")),
+            sub=f"首付30% {_cny_text(housing.get('down_payment'))}",
+        )
+    try:
+        ratio_value = float(ratio)
+    except (TypeError, ValueError):
+        ratio_value = None
+    if ratio_value is not None and not math.isfinite(ratio_value):
+        ratio_value = None
+    ratio_text = (
+        f"占月收入 {ratio_value * 100:.0f}%"
+        if ratio_value is not None
+        else "月收入未填写"
+    )
+    with c6:
+        widgets.metric_card(
+            "📆 估算月供", _cny_text(housing.get("monthly_payment")),
+            sub=f"30年/3.1% · {ratio_text}",
+        )
+
+    with st.expander("📊 本地数据事实（AI 仅基于这些数据推理）", expanded=False):
+        rows = [
+            ("幸福度（0-100）", _num_text(metrics.get("happiness"), "{:.1f}"),
+             _num_text(national.get("happiness"), "{:.1f}"),
+             f"P{_num_text(pcts.get('happiness'), '{:.0f}')}"),
+            ("年收入（元）", _cny_text(metrics.get("income")),
+             _cny_text(national.get("income")),
+             f"P{_num_text(pcts.get('income'), '{:.0f}')}"),
+            ("房价（元/㎡）", _cny_text(metrics.get("house_price")),
+             _cny_text(national.get("house_price")),
+             f"P{_num_text(pcts.get('house_price'), '{:.0f}')}"),
+            ("常住人口（万）", _num_text(metrics.get("population"), "{:,.0f}"),
+             _num_text(national.get("population"), "{:,.0f}"),
+             f"P{_num_text(pcts.get('population'), '{:.0f}')}"),
+            ("可负担指数", _num_text(metrics.get("value_index"), "{:.2f}"),
+             _num_text(national.get("value_index"), "{:.2f}"),
+             f"P{_num_text(pcts.get('value_index'), '{:.0f}')}"),
+            ("综合宜居分", _num_text(metrics.get("composite_score"), "{:.1f}"),
+             _num_text(national.get("composite_score"), "{:.1f}"),
+             f"P{_num_text(pcts.get('composite_score'), '{:.0f}')}"),
+        ]
+        st.dataframe(
+            pd.DataFrame(rows, columns=["指标", "本城市", "全国均值", "百分位"]),
+            hide_index=True,
+            width="stretch",
+        )
+        st.caption(
+            f"数据参考年份 {facts.get('data_year', DATA_REF_YEAR)}；"
+            "住房月供为「90㎡、首付30%、30年、年利率3.1%」的情景估算，"
+            "不是该城市真实成交或租金数据。"
+        )
+        if monthly_income:
+            st.caption(f"收入基准：月收入 ¥{float(monthly_income):,.0f}（{facts.get('income_basis', '—')}）。")
+
+    alternatives = facts.get("alternatives") or []
+    if alternatives:
+        st.markdown("##### 🔀 本地匹配的可替代城市（供参考）")
+        alt_rows = [
+            {
+                "城市": item.get("city", ""),
+                "省份": item.get("province", ""),
+                "房价(元/㎡)": _num_text(item.get("house_price"), "{:,.0f}"),
+                "年收入": _num_text(item.get("income"), "{:,.0f}"),
+                "幸福度": _num_text(item.get("happiness"), "{:.1f}"),
+                "可负担指数": _num_text(item.get("value_index"), "{:.2f}"),
+                "90㎡月供": _num_text(item.get("monthly_mortgage"), "{:,.0f}"),
+            }
+            for item in alternatives
+        ]
+        st.dataframe(pd.DataFrame(alt_rows), hide_index=True, width="stretch")
+        st.caption("替代城市按可负担指数、综合宜居分、幸福度、收入与城市规模加权匹配，不代表迁移建议。")
+
+
+def _render_ai_form(
+    all_df: pd.DataFrame,
+    creds: api_config.ApiCredentials,
+    province_map: dict[str, str],
+) -> tuple[bool, str, ai_advisor.AdvisorProfile, bool]:
+    """渲染 AI 顾问输入表单；只有点击提交按钮才返回 submitted=True。"""
+    city_options = all_df["city"].tolist()
+    if not city_options:
+        return False, "", ai_advisor.AdvisorProfile(), False
+    default_city = "北京" if "北京" in city_options else city_options[0]
+    default_index = city_options.index(default_city)
+
+    with st.form("ai_advisor_form", clear_on_submit=False):
+        row1 = st.columns([1.25, 1, 1])
+        with row1[0]:
+            city = st.selectbox(
+                "🏙️ 选择要分析的城市",
+                options=city_options,
+                index=default_index,
+                format_func=_city_label_mapper(province_map),
+                key="ai_city",
+            )
+        with row1[1]:
+            monthly_income = st.number_input(
+                "💰 税后月收入（元）",
+                min_value=0.0,
+                max_value=200000.0,
+                value=12000.0,
+                step=500.0,
+                key="ai_income",
+                help="用于计算房价收入比、月供收入比；填 0 表示改用该城市平均年收入。",
+            )
+        with row1[2]:
+            household_size = st.number_input(
+                "👨‍👩‍👧 家庭人口",
+                min_value=1,
+                max_value=10,
+                value=1,
+                step=1,
+                key="ai_household",
+            )
+
+        row2 = st.columns([1, 1, 1])
+        with row2[0]:
+            housing = st.selectbox(
+                "🏠 住房状态",
+                options=list(ai_advisor.HOUSING_OPTIONS),
+                index=0,
+                key="ai_housing",
+            )
+        with row2[1]:
+            monthly_rent = st.number_input(
+                "🧾 当前月租（元，可填 0）",
+                min_value=0.0,
+                max_value=50000.0,
+                value=0.0,
+                step=100.0,
+                key="ai_rent",
+                help="仅用于计算租金占收入比例；不填不影响其它分析。",
+            )
+        with row2[2]:
+            has_car = st.toggle("🚗 有车", value=False, key="ai_car")
+
+        priorities = st.multiselect(
+            "🎯 生活优先级（可多选）",
+            options=list(ai_advisor.PRIORITY_OPTIONS),
+            default=[ai_advisor.PRIORITY_LOW_COST, "通勤便利"],
+            key="ai_priorities",
+            help="优先级用于本地替代城市匹配与提示词；未覆盖的维度会明确标注为数据未覆盖。",
+        )
+        free_text = st.text_area(
+            "📝 补充要求（可选，最多 200 字）",
+            value="",
+            max_chars=ai_advisor.MAX_FREE_TEXT,
+            height=80,
+            key="ai_free_text",
+            placeholder="例如：希望通勤 30 分钟内、考虑孩子上学、想控制房租在收入 30% 以内……",
+        )
+        deep_think = st.toggle(
+            "🧠 深度思考（thinking 模式，响应更慢、token 费用更高）",
+            value=False,
+            key="ai_deep_think",
+            disabled=creds.provider != "deepseek",
+            help=(
+                "默认显式关闭 thinking 以控制成本；需要更长的内部推理时再开启。"
+                "若配置的是旧版 deepseek-chat，会自动使用 deepseek-reasoner。"
+            ),
+        )
+        st.caption(
+            "💡 仅在点击下方按钮时调用一次 API；相同输入会复用本次会话结果，"
+            "不会重复计费。密钥只在服务端读取，不会下发到浏览器。"
+            "请求仅包含城市事实与收入/偏好摘要，请勿在补充要求中填写身份证、手机号等敏感信息。"
+        )
+        submitted = st.form_submit_button(
+            "✨ 生成生活成本解读与建议",
+            type="primary",
+            width="stretch",
+        )
+
+    profile = ai_advisor.AdvisorProfile(
+        monthly_income=float(monthly_income or 0.0),
+        household_size=int(household_size or 1),
+        housing=str(housing),
+        monthly_rent=float(monthly_rent or 0.0),
+        has_car=bool(has_car),
+        priorities=tuple(priorities),
+        free_text=str(free_text or ""),
+    )
+    return bool(submitted), str(city), profile, bool(deep_think)
+
+
+def _render_ai_result(result: ai_advisor.AdvisorResult) -> None:
+    """渲染一次 AI 分析结果（本地事实 + 模型文本 + 用量 / 下载）。"""
+    context = result.context
+    if context is not None:
+        _render_ai_facts(context)
+
+    st.markdown("### 📝 AI 生活成本解读与建议")
+    st.markdown(result.content)
+
+    if result.finish_reason == "length":
+        st.warning("模型输出达到长度上限，内容可能被截断；可缩短补充要求后重新生成。")
+
+    usage = result.usage or {}
+    parts = [f"模型 {result.model}"]
+    if usage.get("prompt_tokens"):
+        parts.append(f"提示 {usage['prompt_tokens']} tokens")
+    if usage.get("prompt_cache_hit_tokens"):
+        parts.append(f"上下文缓存命中 {usage['prompt_cache_hit_tokens']} tokens")
+    if usage.get("completion_tokens"):
+        parts.append(f"输出 {usage['completion_tokens']} tokens")
+    if usage.get("reasoning_tokens"):
+        parts.append(f"推理 {usage['reasoning_tokens']} tokens")
+    parts.append(f"用时 {result.elapsed_s:.1f}s")
+    parts.append("会话缓存结果（未重复计费）" if result.cached else "本次调用")
+    st.caption(" · ".join(parts))
+
+    city = context.city if context is not None else "城市"
+    safe_city = "".join(ch for ch in city if ch not in '\\/:*?"<>|') or "城市"
+    st.download_button(
+        "⬇️ 下载本次分析（Markdown）",
+        data=result.content.encode("utf-8"),
+        file_name=f"{safe_city}_AI生活成本分析.md",
+        mime="text/markdown",
+        width="stretch",
+    )
+    st.caption(
+        "⚠️ 以上内容由 DeepSeek 基于本项目演示数据生成，可能存在遗漏或不准确；"
+        "房租、物价、教育、医疗、通勤等未覆盖信息请以当地官方 / 实际口径为准。"
+    )
+
+
+def render_ai_advisor(
+    all_df: pd.DataFrame,
+    industry_df: pd.DataFrame,
+    province_map: dict[str, str],
+) -> None:
+    """第十一节：AI 城市生活成本顾问（本地检索 + DeepSeek 文本生成）。"""
+    widgets.section_title("🤖 AI 城市生活成本顾问（DeepSeek）")
+
+    creds = api_config.get_api_credentials("deepseek")
+    _render_ai_status(creds)
+    if not creds.usable:
+        return
+
+    widgets.insight_box(
+        "<strong>🧠 工作方式：</strong> 先在本地检索并计算城市指标、百分位、住房情景与"
+        "可替代城市，只把压缩后的事实送入 DeepSeek；模型只负责解读与建议，"
+        "不接触 248 行原始数据，也不会接触你的 API 密钥。"
+    )
+    st.caption(
+        "分析范围：全量城市数据（不受左侧侧边栏筛选限制）；"
+        "相同输入会复用本次会话缓存，避免重复调用产生费用。"
+    )
+
+    submitted, city, profile, deep_think = _render_ai_form(
+        all_df, creds, province_map
+    )
+
+    result: ai_advisor.AdvisorResult | None = None
+    if submitted:
+        try:
+            context = ai_advisor.build_city_context(
+                all_df, city, profile, industry_df
+            )
+            model = ai_advisor.choose_model(creds, deep_think)
+            request_key = ai_advisor.build_request_key(
+                context, profile, model, deep_think
+            )
+            cache = st.session_state.setdefault(AI_CACHE_KEY, {})
+            cached = cache.get(request_key) if isinstance(cache, dict) else None
+
+            if isinstance(cached, ai_advisor.AdvisorResult):
+                result = replace(cached, cached=True)
+            else:
+                with st.spinner("DeepSeek 正在基于本地数据生成解读与建议……"):
+                    result = ai_advisor.analyze_city(
+                        all_df,
+                        city,
+                        profile,
+                        creds,
+                        industry_df,
+                        deep_think=deep_think,
+                    )
+                if isinstance(cache, dict):
+                    cache[request_key] = result
+                    while len(cache) > AI_CACHE_LIMIT:
+                        cache.pop(next(iter(cache)))
+
+            st.session_state[AI_LAST_KEY] = result
+        except ValueError as exc:
+            st.warning(str(exc))
+        except ai_advisor.AdvisorError as exc:
+            st.error(str(exc))
+        except Exception as exc:  # noqa: BLE001 - 生成失败不应中断整页
+            logger.exception("AI 顾问生成失败")
+            st.error(f"AI 顾问生成失败：{exc}")
+    else:
+        cached_result = st.session_state.get(AI_LAST_KEY)
+        if isinstance(cached_result, ai_advisor.AdvisorResult):
+            result = cached_result
+
+    if result is not None:
+        _render_ai_result(result)
+    elif not submitted:
+        st.info(
+            "填写上方收入、住房状态与优先级后，点击「✨ 生成生活成本解读与建议」。"
+            "首次调用会消耗少量 DeepSeek tokens；相同输入再次生成会直接复用缓存。"
+        )
+
+    if st.button("🧹 清空本次 AI 结果", key="ai_clear", width="stretch"):
+        st.session_state.pop(AI_LAST_KEY, None)
+        st.session_state.pop(AI_CACHE_KEY, None)
+        st.rerun()
+
+
+
+
 
 def render_forecast(
     all_df: pd.DataFrame,
@@ -2255,6 +2642,7 @@ province_map = df.set_index("city")["province"].to_dict()
 
 render_association(filtered_df, main_color)
 render_city_comparison(filtered_df, main_color, province_map, stats)
+render_ai_advisor(df, industry_df, province_map)
 render_forecast(df, main_color, province_map)
 render_happiness_ranking(filtered_df, main_color)
 render_affordability(filtered_df, main_color)
