@@ -315,7 +315,7 @@ matplotlib 找不到中文字形，只能画占位方框。
 ```bash
 python scripts/fetch_fonts.py --check     # 查看内置字体是否就位、matplotlib 实际选用的字体
 python scripts/fetch_fonts.py --force     # 字体文件丢失时重新下载（jsDelivr 多镜像自动重试）
-python -m pytest tests/test_fonts.py tests/test_rendering.py -v   # 字体 + PNG 渲染回归测试
+python -m pytest tests/test_fonts.py tests/test_rendering.py tests/test_starlette_compat.py -v   # 字体 + PNG 渲染 + starlette 兼容性
 ```
 
 **Streamlit Community Cloud 上仍然显示异常时，按顺序检查**：
