@@ -85,6 +85,21 @@ if _FONT_STATUS["ok"]:
 else:
     logger.warning("图表中文字体自检未通过：%s", _FONT_STATUS)
 
+# 记录 Web 运行环境版本：排查静态 / 媒体文件（图表 PNG）下发问题时非常关键
+try:  # pragma: no cover - 仅随依赖版本变化
+    import starlette
+
+    _STARLETTE_VERSION = starlette.__version__
+except Exception:  # noqa: BLE001 - 仅用于日志，失败不影响应用
+    _STARLETTE_VERSION = "unknown"
+logger.info(
+    "Web 运行环境：Streamlit %s · starlette %s · Python %s",
+    st.__version__,
+    _STARLETTE_VERSION,
+    sys.version.split()[0],
+)
+
+
 
 # 城市级表格列格式（键 = COLUMN_LABELS 中文列名），供 _styled_table 统一使用
 TABLE_FORMAT: dict[str, str] = {

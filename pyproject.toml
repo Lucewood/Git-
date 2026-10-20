@@ -10,6 +10,9 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "streamlit>=1.40",
+    # Streamlit 1.58 的 GZip 中间件与 starlette>=1.4 不兼容：
+    # /media 图表响应会丢失 http.response.start 并返回 500。
+    "starlette==1.3.1",
     "pandas>=2.2",
     "numpy>=1.26",
     "matplotlib>=3.8",

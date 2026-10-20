@@ -1,5 +1,11 @@
 # 运行时依赖（生产环境）
 streamlit==1.58.0
+# 必须锁定 starlette：Streamlit 1.58.0 的 GZip 中间件适配的是 starlette 1.3.x
+# 的内部实现。云端 uv 会把 starlette 解析到 1.9.x，此时 /media/（图表 PNG）
+# 等响应会在 gzip 中间件中丢掉 http.response.start，报
+# "Expected ASGI message 'http.response.start', but got 'http.response.body'"
+# 并返回 500，表现为页面上所有 matplotlib 图表都无法显示（其余文字正常）。
+starlette==1.3.1
 pandas==3.0.3
 numpy==2.5.0
 matplotlib==3.11.0

@@ -320,21 +320,27 @@ python -m pytest tests/test_fonts.py tests/test_rendering.py -v   # 字体 + PNG
 
 **Streamlit Community Cloud 上仍然显示异常时，按顺序检查**：
 
-0. 若 `Manage app` 显示 `installer returned a non-zero exit code` /
+0. 日志反复出现 `RuntimeError: Expected ASGI message 'http.response.start',
+   but got 'http.response.body'`：这是 **starlette 版本过新**导致的协议错误
+   （Streamlit 1.58.0 的 GZip 中间件适配 starlette 1.3.x；starlette ≥1.4 会让
+   `/media/` 图表 PNG 等响应返回 500，表现为文字正常、所有图表空白）。
+   `requirements.txt` 已锁定 `starlette==1.3.1`，**不要删除这行锁定**，重新部署即可；
+1. 若 `Manage app` 显示 `installer returned a non-zero exit code` /
    `Error during processing dependencies`，属于**依赖安装失败**，与图表代码无关：
    确认仓库根目录没有 `packages.txt`（本仓库不包含），并检查 `requirements.txt`
    中的版本能否在该 Python 版本下安装；
-1. 云端运行的提交是否包含字体：仓库里 `assets/fonts/NotoSansSC-Regular.otf` 应约 8 MB，
+2. 云端运行的提交是否包含字体：仓库里 `assets/fonts/NotoSansSC-Regular.otf` 应约 8 MB，
    且 `git ls-files assets/fonts` 能列出它（不能是 Git LFS 指针文件）；
-2. Cloud 控制台 → 应用右下角 `Manage app` → **Reboot app**（必要时 `Clear cache`）；
+3. Cloud 控制台 → 应用右下角 `Manage app` → **Reboot app**（必要时 `Clear cache`）；
    仅重新打开网页不会重新安装依赖 / 重新克隆仓库；
-3. 在 `Manage app` 日志里搜索 `图表中文字体自检`：
+4. 在 `Manage app` 日志里搜索 `图表中文字体自检`：
    - `通过：Noto Sans SC（/mount/src/.../assets/fonts/NotoSansSC-Regular.otf）` 表示字体正常；
    - 出现 `自检未通过` 或 `图表文字缺字` 时，日志会给出缺失的码位，按提示检查字体文件；
-4. 页面侧边栏若出现「图表中文字体未正确加载」，展开「🩺 字体自检详情」可看到
+5. 页面侧边栏若出现「图表中文字体未正确加载」，展开「🩺 字体自检详情」可看到
    候选字体、解析到的文件路径与缺失字形；
-5. 若图表区域显示「该图表渲染失败：…」，说明是渲染异常而非字体问题，把该异常信息
+6. 若图表区域显示「该图表渲染失败：…」，说明是渲染异常而非字体问题，把该异常信息
    （或 `Manage app` 日志里的 traceback）反馈即可定位。
+
 
 ---
 
