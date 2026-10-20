@@ -36,8 +36,6 @@
 │       ├── config.py             # 路径 / 常量 / 数据集列定义 / 环境变量配置
 │       ├── logging_setup.py      # 统一日志（控制台 + 滚动文件）
 │       ├── fonts.py              # 中文字体注册与解析（内置字体优先，防「方框」缺字）
-│       ├── mpl_bootstrap.py      # matplotlib 配置目录引导（只读 HOME / 只读容器兜底）
-│       ├── rendering.py          # Figure → PNG 光栅化（dpi 控制 + 缺字告警）
 │       ├── data_loader.py        # CSV 加载 / 合并 / 派生指标 / 质量校验
 │       ├── analysis.py           # 纯函数分析逻辑（相关、异常值、聚合）
 │       ├── career.py             # 就业指导推荐引擎（五维加权打分与建议生成）
@@ -276,7 +274,32 @@ docker run -p 8501:8501 city-insight
 
 ---
 
+## 🩺 Streamlit Cloud 图表全部空白（starlette 兼容性）
+
+**现象**：页面文字、表格、指标卡片都正常，但所有 matplotlib 图表（条形图 / 折线图 /
+散点图 / 热力图）区域空白或加载失败；`Manage app` 日志反复出现：
+
+```
+RuntimeError: Expected ASGI message 'http.response.start', but got 'http.response.body'.
+```
+
+**原因**：`streamlit==1.58.0` 的 `SelectiveGZipMiddleware` 是按 `starlette 1.3.x`
+的 `GZipResponder` 内部实现编写的。云端 uv 在没有版本上限约束时会把 `starlette`
+解析到 1.9.x，此时 gzip 中间件会吞掉 `http.response.start`，导致 `/media/` 下的
+图表 PNG 等响应协议错误并返回 500。本地通常是较旧的 starlette，所以看不出问题。
+
+**修复**：在 `requirements.txt` 与 `pyproject.toml` 中锁定 `starlette==1.3.1`；
+`tests/test_starlette_compat.py` 会校验版本上限，并直接断言 gzip 中间件对
+`image/png` 响应仍按「`http.response.start` → `http.response.body`」顺序下发。
+
+> 部署后可在日志确认：`Web 运行环境：Streamlit 1.58.0 · starlette 1.3.1 · Python 3.14.8`。
+> 如果 starlette 仍是 1.9.x，说明依赖缓存未刷新：在 `Manage app` 中 **Clear cache**
+> 后重新部署。
+
+---
+
 ## 🈶 中文字体（图表中文显示为「方框 + 字」的修复说明）
+
 
 **现象**：应用部署到 Streamlit Community Cloud（或任何未安装中文字体的 Linux 环境）后，
 条形图 / 折线图 / 散点图等 matplotlib 图表的标题、坐标轴、刻度与图例里的中文
@@ -291,56 +314,31 @@ matplotlib 找不到中文字形，只能画占位方框。
 1. `assets/fonts/NotoSansSC-Regular.otf`（Noto Sans SC，SIL OFL 1.1，来源与许可证见 `assets/fonts/README.md`）；
 2. `src/city_insight/fonts.py` 由 `charts.setup_plot_style()` 调用 `apply_cjk_font()`：
    先用 `font_manager.addfont()` 注册内置字体，再按 `config.FONT_SANS` 的优先级
-   （内置字体 → 常见系统中文字体 → `DejaVu Sans`）写入 `font.family` / `font.sans-serif`
-   并关闭 `axes.unicode_minus`；
-3. **字形校验**：候选字体必须真的包含 `中国城市生活成本幸福感房价元㎡省份` 等字形才会被选中。
-   候选表末尾的 `DejaVu Sans` 不含 CJK 字形，绝不会再被当中文字体使用（旧实现会静默
-   选中它，导致云端图表变方框且日志无告警）；
-4. 启动时做一次**字体自检**：通过则在日志里打印实际使用的字体文件路径；未通过则在侧边栏
-   显示告警 + 自检详情（JSON），便于在 Streamlit Cloud 上直接定位；
-5. 图表改为先在服务端光栅化为 PNG（`city_insight/rendering.py`）再用 `st.image` 下发：
-   dpi 可控、缺字告警会写入日志，渲染失败时页面会显示真实异常类型与信息，而不是整块空白；
-6. `city_insight/mpl_bootstrap.py` 在导入 matplotlib 之前确保 `MPLCONFIGDIR` 可写，
-   兼容只读 HOME / 只读容器（字体缓存写不进去时可自动改到临时目录）。
+   （内置字体 → 常见系统中文字体 → `DejaVu Sans`）写入 `font.sans-serif` 并关闭
+   `axes.unicode_minus`；
+3. 内置字体缺失时自动回退到系统中文字体；两者都没有才降级并写告警日志（含修复提示）。
 
 因此本应用**无需**在服务器上额外安装字体，也不依赖运行时联网，Windows / macOS / Linux
-渲染结果一致。仓库刻意**不包含** `packages.txt`：在 Streamlit Community Cloud 上，
-`packages.txt` 的 apt 安装失败会直接导致整个应用部署失败
-（`installer returned a non-zero exit code` / `Error during processing dependencies`），
-而内置字体方案已能覆盖云端缺字场景。若确需系统字体，请自行添加并先确认镜像源可用。
-
+渲染结果一致。
 
 **验证 / 排查**：
 
 ```bash
 python scripts/fetch_fonts.py --check     # 查看内置字体是否就位、matplotlib 实际选用的字体
 python scripts/fetch_fonts.py --force     # 字体文件丢失时重新下载（jsDelivr 多镜像自动重试）
-python -m pytest tests/test_fonts.py tests/test_rendering.py tests/test_starlette_compat.py -v   # 字体 + PNG 渲染 + starlette 兼容性
+python -m pytest tests/test_fonts.py -v   # 回归测试：只允许内置字体渲染中文，断言无缺字告警
 ```
 
-**Streamlit Community Cloud 上仍然显示异常时，按顺序检查**：
+**替代方案（仅在无法内置字体时才使用）**：在仓库根目录添加 `packages.txt`，
+让 Streamlit Community Cloud 在构建时安装系统中文字体（一行一个包名）：
 
-0. 日志反复出现 `RuntimeError: Expected ASGI message 'http.response.start',
-   but got 'http.response.body'`：这是 **starlette 版本过新**导致的协议错误
-   （Streamlit 1.58.0 的 GZip 中间件适配 starlette 1.3.x；starlette ≥1.4 会让
-   `/media/` 图表 PNG 等响应返回 500，表现为文字正常、所有图表空白）。
-   `requirements.txt` 已锁定 `starlette==1.3.1`，**不要删除这行锁定**，重新部署即可；
-1. 若 `Manage app` 显示 `installer returned a non-zero exit code` /
-   `Error during processing dependencies`，属于**依赖安装失败**，与图表代码无关：
-   确认仓库根目录没有 `packages.txt`（本仓库不包含），并检查 `requirements.txt`
-   中的版本能否在该 Python 版本下安装；
-2. 云端运行的提交是否包含字体：仓库里 `assets/fonts/NotoSansSC-Regular.otf` 应约 8 MB，
-   且 `git ls-files assets/fonts` 能列出它（不能是 Git LFS 指针文件）；
-3. Cloud 控制台 → 应用右下角 `Manage app` → **Reboot app**（必要时 `Clear cache`）；
-   仅重新打开网页不会重新安装依赖 / 重新克隆仓库；
-4. 在 `Manage app` 日志里搜索 `图表中文字体自检`：
-   - `通过：Noto Sans SC（/mount/src/.../assets/fonts/NotoSansSC-Regular.otf）` 表示字体正常；
-   - 出现 `自检未通过` 或 `图表文字缺字` 时，日志会给出缺失的码位，按提示检查字体文件；
-5. 页面侧边栏若出现「图表中文字体未正确加载」，展开「🩺 字体自检详情」可看到
-   候选字体、解析到的文件路径与缺失字形；
-6. 若图表区域显示「该图表渲染失败：…」，说明是渲染异常而非字体问题，把该异常信息
-   （或 `Manage app` 日志里的 traceback）反馈即可定位。
+```
+fonts-noto-cjk
+```
 
+> ⚠️ `packages.txt` 安装失败会导致整个应用部署失败（`installer returned a non-zero
+> exit code`），且依赖镜像自带的软件源；本仓库**不包含** `packages.txt`，默认用内置
+> 字体方案（零部署风险、离线可用），仅在特殊环境才需要上面的替代方案。
 
 ---
 

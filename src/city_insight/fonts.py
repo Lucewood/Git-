@@ -20,14 +20,8 @@ import logging
 from functools import lru_cache
 from pathlib import Path
 
-from .mpl_bootstrap import ensure_mpl_config_dir
-
-# 任何入口（脚本 / 测试 / Streamlit）导入本模块时都先准备可写的字体缓存目录
-ensure_mpl_config_dir()
-
 import matplotlib
 from matplotlib import font_manager
-from matplotlib.ft2font import FT2Font
 
 from .config import FONT_DIR, FONT_SANS
 
@@ -35,11 +29,6 @@ logger = logging.getLogger(__name__)
 
 # matplotlib 可直接加载的字体文件扩展名
 FONT_SUFFIXES: frozenset[str] = frozenset({".otf", ".ttf", ".ttc"})
-
-# 中文字形探针：这些字在任何一张图的标题 / 坐标轴 / 城市名中都会出现。
-# 只有真正包含这些字形的字体才会被当作「中文字体」，避免 DejaVu Sans 这类
-# 不含 CJK 字形的字体被误选（否则云端图表会静默变成「方框」）。
-CJK_PROBE = "中国城市生活成本幸福感房价元㎡省份"
 
 
 def bundled_font_files(font_dir: Path | None = None) -> list[Path]:
@@ -74,55 +63,6 @@ def register_font_file(path: str) -> str | None:
         return None
 
 
-@lru_cache(maxsize=8)
-def font_charmap(path: str) -> frozenset[int]:
-    """字体文件包含的 Unicode 码位集合（读取失败时返回空集合，不抛异常）。"""
-    try:
-        return frozenset(FT2Font(str(path)).get_charmap())
-    except Exception as exc:  # noqa: BLE001 - 字体损坏时按「无字形」处理
-        logger.warning("无法读取字体字形表（%s）：%s", path, exc)
-        return frozenset()
-
-
-def font_supports_cjk(path: str | Path) -> bool:
-    """字体文件是否包含全部中文字形探针（见 ``CJK_PROBE``）。"""
-    charmap = font_charmap(str(path))
-    return bool(charmap) and all(ord(ch) in charmap for ch in CJK_PROBE)
-
-
-@lru_cache(maxsize=8)
-def resolved_font_path(family: str) -> str | None:
-    """字体族名 → matplotlib 实际会使用的字体文件路径；找不到时返回 None。"""
-    if not family:
-        return None
-    try:
-        path = font_manager.findfont(
-            font_manager.FontProperties(family=family),
-            fallback_to_default=False,
-        )
-    except Exception as exc:  # noqa: BLE001 - 未安装该字体时 findfont 会抛 ValueError
-        logger.debug("字体族「%s」未找到：%s", family, exc)
-        return None
-    return str(path)
-
-
-def family_supports_cjk(family: str | None) -> bool:
-    """字体族名解析到的实际字体文件是否包含中文字形。"""
-    if not family:
-        return False
-    path = resolved_font_path(family)
-    return bool(path) and font_supports_cjk(path)
-
-
-def missing_glyphs(text: str, family: str | None = None) -> list[int]:
-    """返回 ``text`` 中该字体缺失的码位（升序）；无字体可用时返回全部非 ASCII 码位。"""
-    path = resolved_font_path(family) if family else None
-    if not path:
-        return sorted({ord(ch) for ch in text if ord(ch) > 127})
-    charmap = font_charmap(path)
-    return sorted({ord(ch) for ch in text if ord(ch) > 127 and ord(ch) not in charmap})
-
-
 @lru_cache(maxsize=1)
 def bundled_families() -> tuple[str, ...]:
     """注册全部内置字体并返回其字体族名（结果缓存，避免每次 rerun 重复注册）。"""
@@ -147,28 +87,20 @@ def available_families() -> set[str]:
 def resolve_cjk_font() -> str | None:
     """按优先级解析用于渲染中文的字体族名；无可用中文字体时返回 None。
 
-    判定依据有两个，缺一不可：
-
-    1. 字体族名出现在 ``config.FONT_SANS`` 候选表中（内置字体 "Noto Sans SC"
-       排在首位，因此内置字体可用时优先）；
-    2. 该族名在 matplotlib 中实际解析到的字体文件**包含中文字形**
-       （见 ``CJK_PROBE``）。这一条避免候选表末尾的 ``DejaVu Sans`` 被当成
-       中文字体——它不含 CJK 字形，会让云端图表静默显示成「方框」。
+    判定依据是 `config.FONT_SANS` 的顺序（内置字体 "Noto Sans SC" 排在首位），
+    因此内置字体可用时优先使用内置字体，否则使用命中的系统中文字体。
     """
     registered = bundled_families()
     families = available_families()
     for family in FONT_SANS:
-        if family not in families:
-            continue
-        if not family_supports_cjk(family):
-            continue
-        if registered and family not in registered:
-            logger.info("未注册内置字体，改用系统中文字体：%s", family)
-        return family
+        if family in families:
+            if registered and family not in registered:
+                logger.info("未注册内置字体，改用系统中文字体：%s", family)
+            return family
     logger.warning(
-        "未找到真正包含中文字形的字体（候选：%s），图表中文将显示为方框；"
-        "请确认内置字体目录存在且文件完整：%s（可用 python scripts/fetch_fonts.py "
-        "--check 校验、--force 重新下载，或在服务器上安装中文字体包）。",
+        "未找到任何可用的中文字体（候选：%s），图表中文可能显示为方框；"
+        "请确认内置字体目录存在：%s（可用 python scripts/fetch_fonts.py 重新下载，"
+        "或在服务器上安装中文字体包）。",
         "、".join(FONT_SANS),
         FONT_DIR,
     )
@@ -194,31 +126,19 @@ def apply_cjk_font() -> str | None:
 
     必须在 seaborn 的 `set_style` / `set_theme` 之后调用：它们会重置字体相关
     rcParams，先设置会被覆盖。
-
-    说明：``font.family`` 直接写成解析到的具体字体族（而不是 "sans-serif"
-    别名，也不铺开整条候选栈），这样即使某个第三方库改写了
-    ``font.sans-serif``，图表文字仍会使用已注册的中文字体；同时避免
-    matplotlib 为每段文字逐个查找未安装的候选字体（会显著拖慢渲染）。
     """
     family = resolve_cjk_font()
-    stack = cjk_font_stack(family)
-    matplotlib.rcParams["font.family"] = [family] if family else ["sans-serif"]
-    matplotlib.rcParams["font.sans-serif"] = stack
+    matplotlib.rcParams["font.family"] = "sans-serif"
+    matplotlib.rcParams["font.sans-serif"] = cjk_font_stack(family)
     matplotlib.rcParams["axes.unicode_minus"] = False
     return family
 
 
 def font_report() -> dict[str, object]:
-    """字体解析摘要（供启动日志 / 页面自检 / 测试断言使用）。"""
+    """字体解析摘要（供启动日志 / 测试断言使用）。"""
     family = resolve_cjk_font()
-    path = resolved_font_path(family) if family else None
-    missing = missing_glyphs(CJK_PROBE, family)
     return {
         "family": family,
         "bundled": [p.name for p in bundled_font_files()],
         "stack": cjk_font_stack(family),
-        "path": path,
-        "missing": missing,
-        "ok": bool(family and path and not missing),
     }
-

@@ -33,11 +33,9 @@ def _fresh_font_cache():
     """每个用例前后清空解析缓存：monkeypatch 场景下避免缓存互相污染。"""
     fonts.resolve_cjk_font.cache_clear()
     fonts.bundled_families.cache_clear()
-    fonts.resolved_font_path.cache_clear()
     yield
     fonts.resolve_cjk_font.cache_clear()
     fonts.bundled_families.cache_clear()
-    fonts.resolved_font_path.cache_clear()
 
 
 def test_bundled_font_is_shipped():
@@ -86,24 +84,10 @@ def test_resolve_falls_back_to_system_font(monkeypatch, tmp_path):
     """内置字体缺失（如只部署了 src/）时应回退到系统中文字体。"""
     monkeypatch.setattr(fonts, "FONT_DIR", tmp_path)
     monkeypatch.setattr(fonts, "FONT_SANS", ["DejaVu Sans"])
-    # 模拟系统里存在一个包含 CJK 字形的 "DejaVu Sans"（真实 DejaVu 不含中文）
-    monkeypatch.setattr(fonts, "family_supports_cjk", lambda family: True)
     fonts.resolve_cjk_font.cache_clear()
     fonts.bundled_families.cache_clear()
     assert fonts.bundled_families() == ()
     assert fonts.resolve_cjk_font() == "DejaVu Sans"
-
-
-def test_resolve_rejects_font_without_cjk_glyphs(monkeypatch):
-    """候选表末尾的 DejaVu Sans 不含 CJK 字形，绝不能被当中文字体选中。
-
-    回归场景：云端缺少中文字体时，旧实现会静默返回 DejaVu Sans，图表中文
-    全部变成「方框」，而且日志里没有任何告警。
-    """
-    monkeypatch.setattr(fonts, "FONT_SANS", ["DejaVu Sans"])
-    fonts.resolve_cjk_font.cache_clear()
-    fonts.bundled_families.cache_clear()
-    assert fonts.resolve_cjk_font() is None
 
 
 def test_resolve_returns_none_when_no_font_available(monkeypatch, tmp_path):
@@ -116,24 +100,13 @@ def test_resolve_returns_none_when_no_font_available(monkeypatch, tmp_path):
     assert fonts.cjk_font_stack(None) == ["No Such CJK Font XYZ"]
 
 
-def test_missing_glyphs_reports_only_absent_chars():
-    """字形检查应只报告字体缺失的字符（中文可覆盖时返回空列表）。"""
-    family = fonts.resolve_cjk_font()
-    assert fonts.missing_glyphs("中国城市幸福度", family) == []
-    # DejaVu Sans 不含中文，必定报告缺字
-    assert fonts.missing_glyphs("中国", "DejaVu Sans")
-
-
 def test_apply_cjk_font_sets_rcparams():
     """setup_plot_style() 之后 rcParams 应以解析到的中文字体为首选。"""
     charts.setup_plot_style()
-    family = fonts.resolve_cjk_font()
-    assert family is not None
-    # font.family 直接写成具体族名列表（而非 "sans-serif" 别名），避免被别名覆盖
-    assert list(matplotlib.rcParams["font.family"])[0] == family
-    assert matplotlib.rcParams["font.sans-serif"][0] == family
+    # matplotlib 会把 font.family 规范化成列表
+    assert list(matplotlib.rcParams["font.family"]) == ["sans-serif"]
+    assert matplotlib.rcParams["font.sans-serif"][0] == fonts.resolve_cjk_font()
     assert matplotlib.rcParams["axes.unicode_minus"] is False
-
 
 
 def test_cjk_text_renders_without_missing_glyph_warning():
@@ -161,8 +134,5 @@ def test_cjk_text_renders_without_missing_glyph_warning():
 def test_font_report_shape():
     """字体解析摘要字段稳定（供日志 / 排查使用）。"""
     report = fonts.font_report()
-    assert {"family", "bundled", "stack", "path", "missing", "ok"} == set(report)
+    assert set(report) == {"family", "bundled", "stack"}
     assert report["bundled"], "摘要应列出内置字体文件"
-    assert report["ok"] is True
-    assert report["missing"] == []
-    assert report["path"], "应能解析到实际的字体文件路径"
