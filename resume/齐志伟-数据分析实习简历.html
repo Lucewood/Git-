@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>齐志伟 · 数据分析实习简历</title>
+<style>
+  :root {
+    --ink: #1b2434;
+    --muted: #5b6678;
+    --accent: #1f5f8b;
+    --accent-soft: #eaf2f8;
+    --line: #d9e2ec;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #eef1f5; }
+  body {
+    font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans SC", "Source Han Sans SC", Arial, sans-serif;
+    color: var(--ink);
+    font-size: 10.2pt;
+    line-height: 1.62;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .page {
+    width: 210mm;
+    min-height: 297mm;
+    margin: 10mm auto;
+    padding: 12mm 14mm 10mm;
+    background: #fff;
+    box-shadow: 0 8px 28px rgba(20, 35, 60, .12);
+  }
+  header { border-bottom: 2px solid var(--accent); padding-bottom: 7px; margin-bottom: 10px; }
+  .name-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  h1 { font-size: 21pt; letter-spacing: 2px; margin: 0; color: var(--accent); }
+  .intent { font-size: 9.6pt; color: var(--muted); }
+  .intent strong { color: var(--ink); }
+  .contact { margin-top: 6px; font-size: 9.2pt; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 16px; }
+  .contact span::before { content: "·"; color: var(--accent); margin-right: 5px; }
+  section { margin-top: 11px; }
+  h2 {
+    font-size: 11.6pt; margin: 0 0 6px; padding: 2px 0 2px 9px;
+    border-left: 4px solid var(--accent); color: var(--accent); letter-spacing: 1px;
+  }
+  h3 { font-size: 10.6pt; margin: 6px 0 2px; }
+  p { margin: 3px 0; }
+  ul { margin: 3px 0 3px; padding-left: 17px; }
+  li { margin: 1.5px 0; }
+  li::marker { color: var(--accent); }
+  .sub { color: var(--muted); font-size: 9.4pt; }
+  .row { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .row .right { color: var(--muted); font-size: 9.4pt; white-space: nowrap; }
+  .stack {
+    margin: 4px 0 4px; padding: 5px 8px; font-size: 9.2pt; color: #24506e;
+    background: var(--accent-soft); border-radius: 4px;
+  }
+  .stack b { color: var(--accent); }
+  table { width: 100%; border-collapse: collapse; font-size: 9.5pt; }
+  th, td { text-align: left; vertical-align: top; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+  th { width: 19%; color: var(--accent); font-weight: 600; background: #f7fafc; }
+  tr:last-child th, tr:last-child td { border-bottom: none; }
+  .proj-title { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .proj-title h3 { margin: 0; font-size: 11pt; }
+  .proj-title span { color: var(--muted); font-size: 9.2pt; }
+  .tag { color: var(--accent); font-weight: 600; }
+  .highlights { margin: 4px 0 0; }
+  .note { color: var(--muted); }
+  code { font-family: Consolas, "Courier New", monospace; font-size: 9.2pt; color: #24506e; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  @media print {
+    html, body { background: #fff; }
+    .page { width: auto; min-height: auto; margin: 0; padding: 11mm 13mm; box-shadow: none; }
+    li, tr { break-inside: avoid; }
+    @page { size: A4; margin: 0; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header>
+    <div class="name-row">
+      <h1>齐志伟</h1>
+      <div class="intent"><strong>求职意向：</strong>数据分析 / 数据开发 / 算法工程（实习）｜2028 届本科</div>
+    </div>
+    <div class="contact">
+      <span><a href="tel:13224766084">13224766084</a></span>
+      <span><a href="mailto:2662215845@qq.com">2662215845@qq.com</a></span>
+      <span><a href="https://github.com/Lucewood/Git-/tree/master" target="_blank" rel="noopener">github.com/Lucewood/Git-</a></span>
+      <span>河北·唐山曹妃甸区</span>
+    </div>
+  </header>
+
+  <section>
+    <h2>教育背景</h2>
+    <div class="row">
+      <div><strong>华北理工大学</strong>　数据科学与大数据技术　本科</div>
+      <div class="right">2024.09 – 2028.06（预计）</div>
+    </div>
+    <ul>
+      <li>核心课程：Python 程序设计、数据结构与算法、线性代数、概率论与数理统计、数据库原理、机器学习、大数据处理技术、数据可视化</li>
+      <li>英语能力：CET-4 454 分、CET-6 460 分（均已通过）</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>专业技能</h2>
+    <table>
+      <tr><th>编程语言</th><td>Python（主力）、HTML / CSS、Markdown、Git 版本管理</td></tr>
+      <tr><th>数据分析</th><td>pandas（多表连接、分组聚合、透视、类型清洗）、NumPy（向量化计算、最小二乘 / 岭回归）、描述统计、相关性分析、IQR 异常检测、百分位排名</td></tr>
+      <tr><th>机器学习</th><td>scikit-learn（GradientBoostingRegressor）、特征工程、expanding walk-forward 滚动验证、递归多步预测、置信区间、特征重要性、RMSE / MAE / R² / 方向命中率</td></tr>
+      <tr><th>数据可视化</th><td>Matplotlib（Agg 后端、图表工厂封装）、Seaborn（回归线、热力图、主题样式）、pyecharts（Map / Geo 地图）、Streamlit 交互看板、CSS 视觉设计</td></tr>
+      <tr><th>数据采集</th><td>requests、BeautifulSoup4、urllib、html.parser；robots.txt 合规、请求限速、指数退避重试、磁盘缓存、离线页面快照、结构化清洗落库</td></tr>
+      <tr><th>Web 与部署</th><td>Streamlit（多页签、表单、<code>cache_data</code> / <code>cache_resource</code>、组件封装）、Docker 镜像构建、健康检查</td></tr>
+      <tr><th>AI 应用</th><td>DeepSeek / OpenAI 兼容 Chat API、Prompt Engineering、本地检索增强（RAG 思路）、上下文压缩、提示词注入防护、密钥脱敏、Token 成本控制</td></tr>
+      <tr><th>工程质量</th><td>模块化包设计、纯函数与 UI 解耦、类型注解、dataclass、logging 滚动日志、环境变量配置、依赖降级容错、pytest / pytest-cov、Streamlit AppTest、GitHub Actions CI</td></tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>项目经历</h2>
+    <div class="proj-title">
+      <h3>中国城市生活成本与幸福感分析可视化平台<span class="note">（个人项目）</span></h3>
+      <span>2026.06.10 – 至今</span>
+    </div>
+    <div class="stack"><b>技术栈：</b>Python · Streamlit · pandas · NumPy · scikit-learn · Matplotlib · Seaborn · pyecharts · requests · BeautifulSoup4 · DeepSeek API · pytest · Docker · GitHub Actions</div>
+    <p><strong>项目概述：</strong>独立完成从数据生成 / 采集、清洗建模、可视化分析到 AI 解读与云端部署的全链路数据产品。覆盖全国 <strong>248 个城市</strong>、<strong>6 张截面表（1,488 条指标）+ 4,960 行房价历史 + 792 条支柱产业记录</strong>，提供 10+ 个分析模块与 13 类图表。</p>
+    <ul class="highlights">
+      <li><strong>数据工程：</strong>设计多源 CSV 加载合并流程，按 <code>city</code> 左连接生成宽表，派生「住房可负担指数（年收入 ÷ 房价）」「综合宜居评分（0–100）」；编写数据质量校验与字段健康检查；以「文件 mtime + size」构造缓存签名，数据变更后 Streamlit 缓存自动失效。</li>
+      <li><strong>机器学习建模：</strong>构建 <strong>13 维面板特征</strong>（滞后 1/3/5 年涨幅、长期 CAGR、涨幅波动率、房价收入比、收入 / 人口基本面等），以下一年房价对数涨幅相对全国动量的偏离为目标，训练 <code>GradientBoostingRegressor</code>（200 棵树、depth=3、subsample=0.85）；采用 <strong>expanding walk-forward 滚动验证</strong>严格避免前瞻偏差，输出 RMSE / MAE / R² / 方向命中率；对选定城市做<strong>递归多步预测</strong>，基于验证残差标准差给出置信区间与特征重要性；sklearn 缺失时自动降级为 NumPy 岭回归。</li>
+      <li><strong>可视化体系：</strong>基于 Matplotlib（Agg 后端）/ Seaborn 封装 <strong>13 类图表工厂</strong>（散点 + 回归线、相关性热力图、分布直方图、排名条形图、可负担性分布、城市对比、城市百分位画像、异常值标注、房价预测 / 回测、五维得分、薪资 × 需求散点、技能热度图等），统一透明玻璃风格；通过 <code>font_manager</code> 注册内置 OFL 中文字体，解决 Linux 云端图表中文「方框」缺字；用 pyecharts 生成省级宜居度地图与 Top50 城市价值指数地图。</li>
+      <li><strong>爬虫与数据采集：</strong>实现通用爬虫框架——自定义 UA 标识、<code>robots.txt</code> 准入校验（按主机缓存解析结果）、同域 1s 限速、失败指数退避重试、按 URL 摘要落盘缓存、支持 <code>http(s)://</code> 与 <code>file://</code> 双协议；<code>requests → urllib</code>、<code>BeautifulSoup → html.parser</code> 双级依赖降级；解析与清洗分离，数值兼容千分位 / 百分号 / 「—」等脏数据，稳定产出 <strong>792 条</strong>支柱产业记录；默认离线快照保证 CI 无网络可复现。</li>
+      <li><strong>推荐算法设计：</strong>设计可解释的<strong>五维加权打分模型</strong>（技能匹配 30% / 薪资 25% / 发展空间 20% / 岗位规模 10% / 生活宜居 15%，学历门槛按 <code>0.94^档差</code> 折减），全部向量化并保留标量参考版本做逐元素等价性校验；输出技能缺口、典型岗位与逐条提升建议；前端滑块实时调参，画像哈希作为缓存键避免重复计算。</li>
+      <li><strong>LLM 应用落地：</strong>采用「<strong>本地检索计算 + 大模型生成</strong>」两段式架构：城市指标、百分位、全国 / 本省参照、90㎡ 月供与替代城市全部本地确定性计算，仅将压缩事实（硬上限 2,800 字符）送入 DeepSeek；通过固定系统提示词命中前缀缓存、单轮对话、<code>max_tokens</code> 上限、会话级结果缓存（≤8 条）、提示词注入防护与密钥脱敏，在结论可溯源的同时降低调用成本；对 401 / 402 / 429 / 5xx / 超时等错误给出可行动提示。</li>
+      <li><strong>工程质量保障：</strong>业务逻辑抽离为 15 个职责单一的独立模块，纯函数与 UI 解耦；使用类型注解、dataclass、<code>RotatingFileHandler</code> 滚动日志、环境变量配置与依赖降级；编写 <strong>150+ 个 pytest 用例</strong>（数据加载、分析、预测、图表、爬虫、推荐、API 配置、字体，并用 monkeypatch 模拟网络层、Streamlit AppTest 做无头端到端测试）；GitHub Actions 在 push / PR 自动安装依赖、运行测试并上传覆盖率报告。</li>
+      <li><strong>部署与疑难排查：</strong>编写 Dockerfile 分层构建（依赖层缓存）并配置 <code>/_stcore/health</code> 健康检查；定位 Streamlit Cloud「文字正常但所有图表空白」，追查到 starlette 1.9 gzip 中间件吞掉 <code>http.response.start</code> 导致 <code>/media/</code> PNG 返回 500，通过锁定 <code>starlette==1.3.1</code> 并补充 ASGI 响应顺序回归测试修复。</li>
+    </ul>
+    <p><strong>项目成果：</strong>形成可复现、可测试、可部署的完整数据应用；数据管道一条命令重建，测试全绿并接入持续集成；把「数据清洗 → 统计分析 → 机器学习预测 → 可解释推荐 → 大模型解读」串联为可演示的端到端产品。</p>
+  </section>
+
+
+  <section>
+    <h2>自我评价</h2>
+    <ul>
+      <li><strong>探索能力强：</strong>习惯从问题出发自学新技术，独立完成爬虫、机器学习、LLM 接入、容器化部署等此前未接触的模块，并沉淀为可复用的框架与测试。</li>
+      <li><strong>谦逊好学：</strong>保持空杯心态，主动阅读源码与官方文档定位根因（如 starlette 中间件问题），乐于接受代码评审与反馈并快速迭代。</li>
+      <li><strong>与时俱进：</strong>持续关注大模型应用、数据可视化与工程化实践，愿意把前沿工具真正落到可运行、可验证的项目里。</li>
+      <li><strong>工程习惯：</strong>重视可复现与可维护，坚持写测试、写文档、做异常降级，不满足于「能跑就行」。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>其他信息</h2>
+    <ul>
+      <li>英语能力：CET-4 454 分、CET-6 460 分，均已通过</li>
+      <li>实习安排：随时到岗，实习时长不限，工作地点服从公司安排</li>
+    </ul>
+  </section>
+
+</div>
+</body>
+</html>
+
