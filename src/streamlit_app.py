@@ -1052,7 +1052,8 @@ def render_ai_advisor(
     widgets.insight_box(
         "<strong>🧠 工作方式：</strong> 先在本地检索并计算城市指标、百分位、住房情景与"
         "可替代城市，只把压缩后的事实送入 DeepSeek；模型只负责解读与建议，"
-        "不接触 248 行原始数据，也不会接触你的 API 密钥。"
+        "不接触 248 行原始数据，也不会接触你的 API 密钥。",
+        tone="lilac",
     )
     st.caption(
         "分析范围：全量城市数据（不受左侧侧边栏筛选限制）；"
@@ -1528,7 +1529,8 @@ def render_affordability(filtered_df: pd.DataFrame, main_color: str) -> None:
     widgets.section_title("🏠 住房可负担性指数分析")
     widgets.insight_box(
         "<strong>💡 住房可负担性指数 = 年收入 ÷ 房价</strong><br>"
-        "指数越高，说明该城市居民用年收入能购买的住房面积越大，住房压力相对越小。"
+        "指数越高，说明该城市居民用年收入能购买的住房面积越大，住房压力相对越小。",
+        tone="mint",
     )
 
     aff_col1, aff_col2 = st.columns(2)
@@ -1995,7 +1997,7 @@ def _render_career_recommendations(
             sub=f"岗位年增速 {_num_text(top['growth_pct'], '{:+.1f}%')}",
         )
 
-    widgets.insight_box(career.build_summary(profile, scored, city_rank))
+    widgets.insight_box(career.build_summary(profile, scored, city_rank), tone="amber")
 
     chart_col, table_col = st.columns([1, 1.35])
     with chart_col:
@@ -2625,11 +2627,32 @@ if filtered_df.empty:
     st.stop()
 
 # ---------------- 页面主体：标题与指标卡片 ----------------
-st.markdown(f'<h1 class="main-header">🏙️ {APP_NAME}</h1>', unsafe_allow_html=True)
 st.markdown(
-    f'<p style="text-align:center; color:#666; font-size:1.05rem; margin-bottom:1rem;">'
-    f"基于全国 {len(df)} 个城市（当前筛选 {len(filtered_df)} 个）的收入、房价、人口与幸福度数据，"
-    "深度探索城市宜居价值</p>",
+    '<div class="scroll-progress" aria-hidden="true"></div>'
+    f'<div class="hero-glass">'
+    f'<div class="hero-aurora" aria-hidden="true">'
+    f'<span class="hero-orb hero-orb-blue"></span>'
+    f'<span class="hero-orb hero-orb-pink"></span>'
+    f'<span class="hero-orb hero-orb-teal"></span>'
+    f'<span class="hero-sheen"></span>'
+    f"</div>"
+    f'<div class="hero-eyebrow">City Living Index · {DATA_REF_YEAR}</div>'
+    f'<h1 class="main-header"><span class="hero-emoji">🏙️</span> {APP_NAME}</h1>'
+    f'<p class="hero-sub">基于全国 {len(df)} 个城市（当前筛选 {len(filtered_df)} 个）的收入、'
+    f"房价、人口与幸福度数据，深度探索城市宜居价值</p>"
+    f'<div class="hero-chips">'
+    f'<span class="hero-chip">🏙️ {len(df)} 个城市</span>'
+    f'<span class="hero-chip">🗺️ {df["province"].nunique()} 个省级行政区</span>'
+    f'<span class="hero-chip">📊 {len(METRIC_COLS)} 项核心指标</span>'
+    f'<span class="hero-chip">🗓️ {DATA_REF_YEAR} 数据参考年</span>'
+    f"</div>"
+    f"</div>",
+    unsafe_allow_html=True,
+)
+
+st.markdown(
+    f'<div class="overview-label"><span class="live-dot"></span>'
+    f"筛选范围实时概览 · {len(filtered_df)} 个城市</div>",
     unsafe_allow_html=True,
 )
 
@@ -2642,18 +2665,19 @@ else:
 c1, c2, c3, c4, c5 = st.columns(5)
 with c1:
     widgets.metric_card("📋 城市总数", f"{len(filtered_df)}",
-                        sub=f"{filtered_df['province'].nunique()} 个省份")
+                        sub=f"{filtered_df['province'].nunique()} 个省份", tone="sky")
 with c2:
-    widgets.metric_card("😊 平均幸福度", f"{stats['happiness']:.1f}", sub="满分 100")
+    widgets.metric_card("😊 平均幸福度", f"{stats['happiness']:.1f}",
+                        sub="满分 100", tone="rose")
 with c3:
     widgets.metric_card("💰 平均年收入", f"¥{stats['income'] / 10000:.1f}万",
-                        sub="单位：元/年")
+                        sub="单位：元/年", tone="amber")
 with c4:
     widgets.metric_card("🏠 平均房价", f"¥{stats['house_price']:.0f}",
-                        sub="单位：元/㎡")
+                        sub="单位：元/㎡", tone="peach")
 with c5:
-    widgets.metric_card("📈 平均可负担指数", f"{stats['value_index']:.2f}",
-                        sub=total_pop_text)
+    widgets.metric_card("📈 可负担指数", f"{stats['value_index']:.2f}",
+                        sub=total_pop_text, tone="mint")
 
 # ---------------- 章节渲染（顺序即页面展示顺序） ----------------
 province_map = df.set_index("city")["province"].to_dict()

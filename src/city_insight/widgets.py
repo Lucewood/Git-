@@ -11,12 +11,31 @@ import streamlit as st
 
 from .config import APP_VERSION, DATA_REF_YEAR
 
+# 液态玻璃语义色（与 styles.CUSTOM_CSS 中的 .tone-* 一一对应）。
+# 不传 tone 时由 CSS 按卡片所在列自动轮换配色，保证同一行玻璃色多元。
+GLASS_TONES: frozenset[str] = frozenset(
+    {"blue", "mint", "peach", "lilac", "rose", "sky", "amber"}
+)
 
-def metric_card(title: str, value: str, sub: str = "") -> None:
-    """渲染顶部指标卡片。"""
+
+def _tone_class(tone: str | None) -> str:
+    """返回玻璃色 CSS 类（未知 tone 静默忽略，避免拼写错误破坏样式）。"""
+    return f" tone-{tone}" if tone in GLASS_TONES else ""
+
+
+def metric_card(
+    title: str, value: str, sub: str = "", tone: str | None = None
+) -> None:
+    """渲染顶部指标卡片。
+
+    Args:
+        tone: 可选的玻璃语义色（blue / mint / peach / lilac / rose / sky / amber）；
+            缺省时由 CSS 按所在列自动轮换，保持多彩但不必逐个指定。
+    """
     sub_html = f'<div class="sub">{sub}</div>' if sub else ""
     st.markdown(
-        f'<div class="metric-card"><h3>{title}</h3><h1>{value}</h1>{sub_html}</div>',
+        f'<div class="metric-card{_tone_class(tone)}">'
+        f"<h3>{title}</h3><h1>{value}</h1>{sub_html}</div>",
         unsafe_allow_html=True,
     )
 
@@ -26,9 +45,16 @@ def section_title(text: str) -> None:
     st.markdown(f'<h2 class="section-title">{text}</h2>', unsafe_allow_html=True)
 
 
-def insight_box(html: str) -> None:
-    """渲染洞察提示框（支持 HTML 片段）。"""
-    st.markdown(f'<div class="insight-box">{html}</div>', unsafe_allow_html=True)
+def insight_box(html: str, tone: str | None = None) -> None:
+    """渲染洞察提示框（支持 HTML 片段）。
+
+    Args:
+        tone: 可选的玻璃语义色；缺省为蓝紫玻璃。
+    """
+    st.markdown(
+        f'<div class="insight-box{_tone_class(tone)}">{html}</div>',
+        unsafe_allow_html=True,
+    )
 
 
 def range_slider(

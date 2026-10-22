@@ -34,9 +34,37 @@ def setup_plot_style() -> None:
     fonts.apply_cjk_font() 完成（仓库内置字体优先，其次系统中文字体），
     确保在未安装中文字体的 Linux 服务器（如 Streamlit Community Cloud）上，
     图表标题 / 坐标轴 / 刻度 / 图例的中文不会渲染成「方框」缺字占位。
+
+    视觉上与页面「液态玻璃」风格对齐：
+    - 画布与坐标轴背景透明，PNG 直接透出图表卡片的玻璃底色；
+    - 文字 / 轴线 / 网格统一为低饱和深墨色，在浅玻璃上保持足够对比度。
     """
     sns.set_style("whitegrid", {"axes.grid": True, "grid.linestyle": "--", "grid.alpha": 0.3})
     fonts.apply_cjk_font()
+
+    # 在字体配置之后统一覆盖：seaborn 的 whitegrid 会把背景设为白色，
+    # 这里改为透明，让 st.pyplot 输出的 PNG 与玻璃衬板自然融合。
+    matplotlib.rcParams.update(
+        {
+            "figure.facecolor": "none",
+            "axes.facecolor": "none",
+            "savefig.facecolor": "none",
+            "savefig.edgecolor": "none",
+            "savefig.transparent": True,
+            "axes.edgecolor": "#c2cde0",
+            "axes.linewidth": 0.8,
+            "grid.color": "#9fb0cf",
+            "grid.alpha": 0.28,
+            "text.color": "#1b2742",
+            "axes.labelcolor": "#3a4866",
+            "xtick.color": "#4b5978",
+            "ytick.color": "#4b5978",
+            "axes.titlecolor": "#14203c",
+            "legend.frameon": False,
+            "legend.facecolor": "none",
+            "legend.edgecolor": "none",
+        }
+    )
 
 
 def _finalize(fig: plt.Figure, tight: bool = True) -> plt.Figure:
