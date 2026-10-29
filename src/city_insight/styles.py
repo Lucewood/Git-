@@ -34,6 +34,10 @@ CUSTOM_CSS = """
         --radius-lg: 22px;
         --radius-md: 16px;
         --radius-sm: 12px;
+        /* 动效曲线；--glass-x / --glass-y 由 widgets.pointer_glow() 的脚本更新，
+           未启用脚本时回退到「顶部中央」的静态高光 */
+        --ease-glide: cubic-bezier(0.22, 1, 0.36, 1);
+        --ease-soft: cubic-bezier(0.4, 0, 0.2, 1);
     }
 
     /* =====================================================================
@@ -175,12 +179,19 @@ CUSTOM_CSS = """
         border-radius: var(--radius-xl);
         border: 1px solid var(--glass-line);
         background:
+            radial-gradient(460px 300px at var(--glass-x, 50%) var(--glass-y, -18%), rgba(255, 255, 255, 0.36), rgba(255, 255, 255, 0) 72%),
             radial-gradient(120% 150% at 8% -10%, rgba(112, 154, 255, 0.30), transparent 58%),
             radial-gradient(110% 140% at 92% 0%, rgba(255, 166, 200, 0.28), transparent 60%),
             radial-gradient(120% 140% at 50% 120%, rgba(126, 226, 208, 0.22), transparent 62%),
             linear-gradient(155deg, rgba(255, 255, 255, 0.84), rgba(255, 255, 255, 0.52));
         box-shadow: var(--shadow-soft), var(--inner-light);
         backdrop-filter: var(--glass-blur);
+        transition: border-color 0.35s var(--ease-soft), box-shadow 0.35s var(--ease-soft);
+        animation: heroIn 0.78s var(--ease-glide) both;
+    }
+    @keyframes heroIn {
+        from { opacity: 0; translate: 0 -10px; }
+        to { opacity: 1; translate: 0 0; }
     }
     /* 上缘大面积柔光：只做 36% 高度，模拟玻璃曲面的一次反射 */
     .hero-glass::before {
@@ -191,7 +202,7 @@ CUSTOM_CSS = """
         opacity: 0.6;
         pointer-events: none;
     }
-    /* 顶缘 1px 高光 */
+    /* 顶缘 1px 高光：极缓慢地缩放呼吸，模拟玻璃边缘的曲面反光 */
     .hero-glass::after {
         content: "";
         position: absolute;
@@ -202,6 +213,11 @@ CUSTOM_CSS = """
         background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.98), transparent);
         opacity: 0.9;
         pointer-events: none;
+        animation: hairlineBreathe 7.5s ease-in-out infinite;
+    }
+    @keyframes hairlineBreathe {
+        0%, 100% { opacity: 0.5; transform: scaleX(0.88); }
+        50% { opacity: 1; transform: scaleX(1); }
     }
     .hero-eyebrow {
         position: relative;
@@ -255,6 +271,49 @@ CUSTOM_CSS = """
         border-radius: inherit;
         pointer-events: none;
     }
+    /* 慢速旋转的棱镜光晕：只用 transform 合成，不会逐帧重绘 Hero 内容 */
+    .hero-aurora::before {
+        content: "";
+        position: absolute;
+        inset: -46%;
+        border-radius: inherit;
+        background: conic-gradient(
+            from 0deg,
+            rgba(110, 150, 255, 0.34),
+            rgba(255, 158, 196, 0.22),
+            rgba(86, 222, 200, 0.28),
+            rgba(164, 140, 255, 0.34),
+            rgba(110, 150, 255, 0.34)
+        );
+        filter: blur(54px);
+        opacity: 0.34;
+        animation: prismSpin 52s linear infinite;
+        will-change: transform;
+    }
+    /* 极淡的星尘：只有 transform + opacity 动画，成本极低 */
+    .hero-aurora::after {
+        content: "";
+        position: absolute;
+        inset: -4%;
+        opacity: 0.45;
+        background-image:
+            radial-gradient(circle at 10% 26%, rgba(255, 255, 255, 0.95) 0 1.4px, transparent 2.2px),
+            radial-gradient(circle at 23% 68%, rgba(255, 255, 255, 0.85) 0 1.2px, transparent 2px),
+            radial-gradient(circle at 38% 18%, rgba(255, 255, 255, 0.8) 0 1.6px, transparent 2.4px),
+            radial-gradient(circle at 52% 82%, rgba(255, 255, 255, 0.9) 0 1.3px, transparent 2.1px),
+            radial-gradient(circle at 66% 32%, rgba(255, 255, 255, 0.8) 0 1.5px, transparent 2.3px),
+            radial-gradient(circle at 78% 74%, rgba(255, 255, 255, 0.92) 0 1.2px, transparent 2px),
+            radial-gradient(circle at 88% 22%, rgba(255, 255, 255, 0.85) 0 1.6px, transparent 2.4px),
+            radial-gradient(circle at 44% 48%, rgba(255, 255, 255, 0.7) 0 1px, transparent 1.8px);
+        background-repeat: no-repeat;
+        animation: dustDrift 16s ease-in-out infinite alternate;
+        will-change: transform, opacity;
+    }
+    @keyframes prismSpin { to { transform: rotate(360deg); } }
+    @keyframes dustDrift {
+        from { transform: translate3d(0, 0, 0); opacity: 0.22; }
+        to { transform: translate3d(0, -12px, 0); opacity: 0.58; }
+    }
     .hero-orb {
         position: absolute;
         display: block;
@@ -288,6 +347,15 @@ CUSTOM_CSS = """
         opacity: 0.34;
         background: radial-gradient(circle at 50% 50%, rgba(74, 220, 198, 0.5), rgba(74, 220, 198, 0) 68%);
         animation-delay: -14s;
+    }
+    .hero-orb-violet {
+        width: 250px;
+        height: 250px;
+        left: 18%;
+        bottom: -150px;
+        opacity: 0.32;
+        background: radial-gradient(circle at 50% 50%, rgba(168, 132, 255, 0.55), rgba(168, 132, 255, 0) 68%);
+        animation-delay: -6s;
     }
     .hero-sheen {
         position: absolute;
@@ -332,6 +400,15 @@ CUSTOM_CSS = """
         border-color: rgba(255, 255, 255, 0.98);
         background: linear-gradient(150deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.56));
     }
+    /* 胶囊入场：只动 translate / opacity，避免覆盖 hover 的 transform */
+    .hero-chip { animation: chipIn 0.62s var(--ease-glide) both; }
+    .hero-chip:nth-child(2) { animation-delay: 0.05s; }
+    .hero-chip:nth-child(3) { animation-delay: 0.1s; }
+    .hero-chip:nth-child(4) { animation-delay: 0.15s; }
+    @keyframes chipIn {
+        from { opacity: 0; translate: 0 10px; }
+        to { opacity: 1; translate: 0 0; }
+    }
     .hero-eyebrow { animation: none; }
     .hero-sub { animation: none; }
     .main-header {
@@ -369,6 +446,7 @@ CUSTOM_CSS = """
         border-radius: var(--radius-lg);
         border: 1px solid var(--glass-line);
         background:
+            radial-gradient(280px 160px at var(--glass-x, 50%) var(--glass-y, -10%), rgba(255, 255, 255, 0.38), rgba(255, 255, 255, 0) 72%),
             radial-gradient(120% 160% at 0% 0%, rgba(110, 152, 255, 0.16), transparent 58%),
             radial-gradient(120% 160% at 100% 100%, rgba(167, 139, 250, 0.13), transparent 60%),
             linear-gradient(150deg, rgba(255, 255, 255, 0.78), rgba(255, 255, 255, 0.46));
@@ -376,7 +454,7 @@ CUSTOM_CSS = """
             inset 0 1px 0 rgba(255, 255, 255, 0.92),
             inset 0 18px 34px -32px rgba(255, 255, 255, 1);
         overflow: hidden;
-        transition: box-shadow 0.3s ease, border-color 0.3s ease;
+        transition: box-shadow 0.3s var(--ease-soft), border-color 0.3s var(--ease-soft);
     }
     .section-title:hover {
         border-color: rgba(255, 255, 255, 0.98);
@@ -395,22 +473,35 @@ CUSTOM_CSS = """
         background: linear-gradient(180deg, #6ea8ff, #8b7cf6 38%, #3fd0bd 70%, #6ea8ff 100%);
         background-size: 100% 260%;
         box-shadow: 0 0 14px rgba(110, 150, 255, 0.45);
-        animation: accentFlow 7s linear infinite;
+        animation: accentFlow 7s linear infinite, accentPulse 6.5s ease-in-out infinite;
     }
     @keyframes accentFlow {
         from { background-position: 50% 0%; }
         to { background-position: 50% 260%; }
     }
+    @keyframes accentPulse {
+        0%, 100% { opacity: 0.82; }
+        50% { opacity: 1; }
+    }
+    /* 悬停时一道柔光扫过玻璃标题：替代原先重复的静态顶线（顶线由 inset 内高光提供） */
     .section-title::after {
         content: "";
         position: absolute;
-        left: 8%;
-        right: 8%;
-        top: 0;
-        height: 1px;
-        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.95), transparent);
-        opacity: 0.85;
+        top: -60%;
+        bottom: -60%;
+        left: -32%;
+        width: 24%;
+        border-radius: inherit;
+        background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.55), transparent);
+        opacity: 0;
+        transform: translate3d(-140%, 0, 0) rotate(10deg);
         pointer-events: none;
+    }
+    .section-title:hover::after { animation: panelSheen 1.15s var(--ease-soft); }
+    @keyframes panelSheen {
+        0% { opacity: 0; transform: translate3d(-140%, 0, 0) rotate(10deg); }
+        22% { opacity: 0.6; }
+        100% { opacity: 0; transform: translate3d(520%, 0, 0) rotate(10deg); }
     }
 
     /* 顶部滚动进度条（滚动驱动动画；不支持的浏览器保持不可见） */
@@ -484,18 +575,26 @@ CUSTOM_CSS = """
         color: var(--ink-900);
         text-align: left;
         background:
+            radial-gradient(190px 190px at var(--glass-x, 50%) var(--glass-y, -12%), rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0) 72%),
             radial-gradient(130% 130% at 6% 0%, var(--tint-1, rgba(96, 146, 255, 0.22)), transparent 62%),
             radial-gradient(120% 120% at 100% 100%, var(--tint-2, rgba(150, 130, 255, 0.14)), transparent 60%),
             linear-gradient(150deg, rgba(255, 255, 255, 0.86), rgba(255, 255, 255, 0.54));
         box-shadow: var(--shadow-soft), var(--shadow-contact), var(--inner-light);
         backdrop-filter: var(--glass-blur);
-        transition: transform 0.22s ease, box-shadow 0.22s ease;
+        transition: transform 0.28s var(--ease-glide), box-shadow 0.28s var(--ease-soft),
+            border-color 0.28s var(--ease-soft);
+        animation: glassRise 0.52s var(--ease-glide) both;
     }
     .metric-card:hover {
-        transform: translateY(-2px);
+        transform: translateY(-3px);
+        border-color: rgba(255, 255, 255, 0.96);
         box-shadow:
             0 30px 66px -34px rgba(20, 33, 78, 0.5),
             var(--shadow-contact), var(--inner-light);
+    }
+    @keyframes glassRise {
+        from { opacity: 0.35; translate: 0 12px; }
+        to { opacity: 1; translate: 0 0; }
     }
     /* 悬停时一道极淡的高光扫过玻璃表面 */
     .metric-card::before {
@@ -535,6 +634,7 @@ CUSTOM_CSS = """
         background: linear-gradient(90deg, transparent, var(--accent, rgba(255, 255, 255, 0.95)), transparent);
         opacity: 0.7;
         pointer-events: none;
+        animation: hairlineBreathe 9s ease-in-out infinite;
     }
     .metric-card h3 {
         margin: 0 0 0.45rem;
@@ -611,6 +711,7 @@ CUSTOM_CSS = """
         border: 1px solid var(--glass-line);
         color: #1e2a47;
         background:
+            radial-gradient(240px 200px at var(--glass-x, 50%) var(--glass-y, -10%), rgba(255, 255, 255, 0.4), rgba(255, 255, 255, 0) 72%),
             radial-gradient(120% 130% at 0% 0%, var(--tint-1, rgba(110, 150, 255, 0.20)), transparent 58%),
             radial-gradient(120% 130% at 100% 100%, var(--tint-2, rgba(167, 139, 250, 0.15)), transparent 60%),
             linear-gradient(150deg, rgba(255, 255, 255, 0.84), rgba(255, 255, 255, 0.54));
@@ -618,14 +719,29 @@ CUSTOM_CSS = """
             inset 0 1px 0 rgba(255, 255, 255, 0.95),
             inset 0 18px 30px -28px rgba(255, 255, 255, 1);
         backdrop-filter: blur(16px) saturate(160%);
-        transition: transform 0.28s ease, box-shadow 0.28s ease;
+        transition: transform 0.3s var(--ease-glide), box-shadow 0.3s var(--ease-soft);
+        animation: glassRise 0.5s var(--ease-glide) both;
     }
     .insight-box:hover {
-        transform: translateY(-2px);
+        transform: translateY(-3px);
         box-shadow: 0 24px 54px -32px rgba(20, 35, 80, 0.5),
             inset 0 1px 0 rgba(255, 255, 255, 1),
             inset 0 18px 30px -28px rgba(255, 255, 255, 1);
     }
+    /* 悬停扫光：与章节标题同一套 keyframes，保持动效语言一致 */
+    .insight-box::after {
+        content: "";
+        position: absolute;
+        top: -80%;
+        bottom: -80%;
+        left: -30%;
+        width: 22%;
+        background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.45), transparent);
+        opacity: 0;
+        transform: translate3d(-160%, 0, 0) rotate(10deg);
+        pointer-events: none;
+    }
+    .insight-box:hover::after { animation: panelSheen 1.2s var(--ease-soft); }
     .insight-box::before {
         content: "";
         position: absolute;
@@ -637,7 +753,7 @@ CUSTOM_CSS = """
         background: linear-gradient(180deg, var(--accent-a, #6ea8ff), var(--accent-b, #8b7cf6), var(--accent-a, #6ea8ff));
         background-size: 100% 220%;
         opacity: 0.9;
-        animation: accentFlow 8s linear infinite;
+        animation: accentFlow 8s linear infinite, accentPulse 7s ease-in-out infinite;
     }
     .insight-box strong { color: #1b2c5e; }
     .insight-box p { color: #1e2a47; }
@@ -665,6 +781,7 @@ CUSTOM_CSS = """
        8. 侧边栏：整块磨砂玻璃
        ===================================================================== */
     [data-testid="stSidebar"] {
+        position: relative;
         background-color: rgba(255, 255, 255, 0.62) !important;
         background-image:
             radial-gradient(120% 55% at 0% 0%, rgba(120, 158, 255, 0.26), transparent 60%),
@@ -683,6 +800,27 @@ CUSTOM_CSS = """
         0% { background-position: 0% 0%, 100% 100%, 0 0; }
         50% { background-position: 12% 8%, 88% 92%, 0 0; }
         100% { background-position: 4% 14%, 96% 86%, 0 0; }
+    }
+    /* 侧边栏右缘的「光带」：极慢地自上而下流动，强化玻璃边缘的折射感 */
+    [data-testid="stSidebar"]::after {
+        content: "";
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 1px;
+        height: 45%;
+        background: linear-gradient(180deg, transparent, rgba(255, 255, 255, 0.95), transparent);
+        opacity: 0;
+        pointer-events: none;
+        z-index: 3;
+        animation: sidebarEdge 13s ease-in-out infinite;
+        will-change: transform, opacity;
+    }
+    @keyframes sidebarEdge {
+        0% { transform: translateY(-30%); opacity: 0; }
+        30% { opacity: 0.85; }
+        70% { opacity: 0.45; }
+        100% { transform: translateY(130%); opacity: 0; }
     }
     [data-testid="stSidebar"] h2::before {
         content: "";
@@ -803,6 +941,11 @@ CUSTOM_CSS = """
         transition: transform 0.18s ease, color 0.18s ease;
     }
     .nav-link:hover .nav-arrow { color: #4d5f8c; transform: translateX(2px); }
+    .nav-link:focus-visible {
+        outline: 2px solid rgba(79, 110, 247, 0.5);
+        outline-offset: 2px;
+        background: rgba(255, 255, 255, 0.66);
+    }
     .nav-top {
         justify-content: center;
         margin-top: 0.5rem;
@@ -968,6 +1111,12 @@ CUSTOM_CSS = """
         box-shadow: 0 14px 34px -18px rgba(43, 52, 140, 0.75),
             inset 0 1px 0 rgba(255, 255, 255, 0.32),
             inset 0 -10px 18px -16px rgba(0, 0, 0, 0.5) !important;
+        background-size: 200% 100% !important;
+        animation: primaryFlow 11s ease-in-out infinite;
+    }
+    @keyframes primaryFlow {
+        0%, 100% { background-position: 0% 50%; }
+        50% { background-position: 100% 50%; }
     }
     [data-testid="stBaseButton-primary"]:hover,
     [data-testid="stBaseButton-primaryFormSubmit"]:hover,
@@ -1018,11 +1167,15 @@ CUSTOM_CSS = """
         color: #1b2a56 !important;
         box-shadow: 0 6px 16px -10px rgba(28, 48, 110, 0.5),
             inset 0 1px 0 #ffffff;
-        animation: tabFlow 10s ease-in-out infinite;
+        animation: tabFlow 10s ease-in-out infinite, tabPop 0.42s var(--ease-glide);
     }
     @keyframes tabFlow {
         0%, 100% { background-position: 0% 50%; }
         50% { background-position: 100% 50%; }
+    }
+    @keyframes tabPop {
+        from { scale: 0.965; }
+        to { scale: 1; }
     }
     [data-baseweb="tab-highlight"],
     [data-baseweb="tab-border"] { display: none !important; }
@@ -1031,15 +1184,36 @@ CUSTOM_CSS = """
        12. 内容容器：折叠面板 / 表单 / 表格
        ===================================================================== */
     [data-testid="stExpander"] {
+        position: relative;
         border-radius: var(--radius-md) !important;
         border: 1px solid rgba(255, 255, 255, 0.68) !important;
         background:
+            radial-gradient(220px 160px at var(--glass-x, 50%) var(--glass-y, -10%), rgba(255, 255, 255, 0.36), rgba(255, 255, 255, 0) 72%),
             radial-gradient(120% 160% at 0% 0%, rgba(110, 152, 255, 0.12), transparent 58%),
             linear-gradient(155deg, rgba(255, 255, 255, 0.68), rgba(255, 255, 255, 0.42));
         box-shadow: 0 20px 48px -36px rgba(20, 32, 80, 0.45),
             inset 0 1px 0 rgba(255, 255, 255, 0.92),
             inset 0 18px 32px -30px rgba(255, 255, 255, 1);
         overflow: hidden;
+        transition: border-color 0.3s var(--ease-soft), box-shadow 0.3s var(--ease-soft);
+    }
+    [data-testid="stExpander"]:hover {
+        border-color: rgba(255, 255, 255, 0.95) !important;
+        box-shadow: 0 26px 56px -38px rgba(20, 32, 80, 0.5),
+            inset 0 1px 0 rgba(255, 255, 255, 1),
+            inset 0 18px 32px -30px rgba(255, 255, 255, 1);
+    }
+    [data-testid="stExpander"]::before {
+        content: "";
+        position: absolute;
+        left: 8%;
+        right: 8%;
+        top: 0;
+        height: 1px;
+        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.95), transparent);
+        opacity: 0.7;
+        pointer-events: none;
+        animation: hairlineBreathe 8s ease-in-out infinite;
     }
     [data-testid="stExpander"] summary {
         padding: 0.85rem 1.05rem;
@@ -1099,6 +1273,7 @@ CUSTOM_CSS = """
         border-radius: var(--radius-lg);
         border: 1px solid rgba(255, 255, 255, 0.7);
         background:
+            radial-gradient(280px 200px at var(--glass-x, 50%) var(--glass-y, -10%), rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0) 72%),
             radial-gradient(120% 110% at 0% 0%, rgba(120, 160, 255, 0.13), transparent 58%),
             radial-gradient(120% 110% at 100% 100%, rgba(167, 139, 250, 0.09), transparent 60%),
             linear-gradient(150deg, rgba(255, 255, 255, 0.80), rgba(255, 255, 255, 0.56));
@@ -1106,7 +1281,8 @@ CUSTOM_CSS = """
             inset 0 1px 0 rgba(255, 255, 255, 0.95),
             inset 0 24px 44px -40px rgba(255, 255, 255, 1);
         overflow: hidden;
-        transition: transform 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease;
+        transition: transform 0.32s var(--ease-glide), box-shadow 0.32s var(--ease-soft),
+            border-color 0.32s var(--ease-soft);
     }
     [data-testid="stImageContainer"]::before,
     [data-testid="stImages"]::before {
@@ -1125,6 +1301,24 @@ CUSTOM_CSS = """
         0%, 100% { opacity: 0.45; }
         50% { opacity: 0.9; }
     }
+    /* 图表卡片悬停扫光：鼠标掠过时一道柔光扫过画布衬板 */
+    [data-testid="stImageContainer"]::after,
+    [data-testid="stImages"]::after {
+        content: "";
+        position: absolute;
+        top: -70%;
+        bottom: -70%;
+        left: -35%;
+        width: 26%;
+        background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.34), transparent);
+        opacity: 0;
+        transform: translate3d(-160%, 0, 0) rotate(10deg);
+        pointer-events: none;
+    }
+    [data-testid="stImageContainer"]:hover::after,
+    [data-testid="stImages"]:hover::after {
+        animation: panelSheen 1.3s var(--ease-soft);
+    }
     [data-testid="stImageContainer"] img,
     [data-testid="stImages"] img { border-radius: var(--radius-sm); }
     [data-testid="stImageCaption"] { color: #4c5977 !important; }
@@ -1137,7 +1331,8 @@ CUSTOM_CSS = """
         background: rgba(255, 255, 255, 0.74);
         box-shadow: 0 24px 60px -40px rgba(20, 32, 80, 0.5),
             inset 0 1px 0 rgba(255, 255, 255, 0.95);
-        transition: transform 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease;
+        transition: transform 0.32s var(--ease-glide), box-shadow 0.32s var(--ease-soft),
+            border-color 0.32s var(--ease-soft);
     }
     [data-testid="stIFrame"] iframe {
         border-radius: calc(var(--radius-lg) - 1px);
@@ -1146,7 +1341,7 @@ CUSTOM_CSS = """
     [data-testid="stImageContainer"]:hover,
     [data-testid="stImages"]:hover,
     [data-testid="stIFrame"]:hover {
-        transform: translateY(-2px);
+        transform: translateY(-3px);
         border-color: rgba(255, 255, 255, 0.95);
         box-shadow: 0 30px 66px -38px rgba(20, 35, 80, 0.5),
             inset 0 1px 0 rgba(255, 255, 255, 1),
@@ -1233,6 +1428,7 @@ CUSTOM_CSS = """
         border-radius: var(--radius-xl);
         border: 1px solid rgba(255, 255, 255, 0.7);
         background:
+            radial-gradient(320px 220px at var(--glass-x, 50%) var(--glass-y, -10%), rgba(255, 255, 255, 0.32), rgba(255, 255, 255, 0) 72%),
             radial-gradient(120% 150% at 0% 0%, rgba(110, 152, 255, 0.14), transparent 58%),
             radial-gradient(120% 150% at 100% 100%, rgba(167, 139, 250, 0.12), transparent 60%),
             linear-gradient(155deg, rgba(255, 255, 255, 0.74), rgba(255, 255, 255, 0.48));
@@ -1254,6 +1450,7 @@ CUSTOM_CSS = """
         background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.95), transparent);
         opacity: 0.8;
         pointer-events: none;
+        animation: hairlineBreathe 8.5s ease-in-out infinite;
     }
     .footer p { margin: 0.28rem 0; color: #3f4c6b; line-height: 1.65; }
     [data-testid="stSidebar"] .sidebar-version {
@@ -1325,7 +1522,11 @@ CUSTOM_CSS = """
             transition: none !important;
             animation: none !important;
         }
-        .metric-card:hover { transform: none; }
+        .metric-card:hover,
+        .insight-box:hover,
+        [data-testid="stImageContainer"]:hover,
+        [data-testid="stImages"]:hover,
+        [data-testid="stIFrame"]:hover { transform: none; }
     }
 
     /* =====================================================================
@@ -1368,6 +1569,60 @@ CUSTOM_CSS = """
     @media (prefers-reduced-motion: reduce) {
         .stApp,
         [data-testid="stMain"] { scroll-behavior: auto; }
+    }
+
+    /* =====================================================================
+       17. 动效编排：入场节奏 / 滚动显现 / 移动端降级
+       ===================================================================== */
+    /* 指标卡按列错峰入场：同一行从左到右依次浮现，避免整屏同时动画 */
+    [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(1) .metric-card { animation-delay: 0.02s; }
+    [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(2) .metric-card { animation-delay: 0.07s; }
+    [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(3) .metric-card { animation-delay: 0.12s; }
+    [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(4) .metric-card { animation-delay: 0.17s; }
+    [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(5) .metric-card { animation-delay: 0.22s; }
+    [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(6) .metric-card { animation-delay: 0.27s; }
+
+    /* 滚动驱动显现：章节标题进入视口时轻轻上浮。
+       仅 Chrome / Edge 等支持 animation-timeline: view() 的浏览器生效；
+       其余浏览器退化为一次性的时间动画（同样是 translate + opacity）。 */
+    @media (prefers-reduced-motion: no-preference) {
+        @supports (animation-timeline: view()) {
+            .section-title {
+                animation: sectionReveal linear both;
+                animation-timeline: view();
+                animation-range: entry 2% entry 55%;
+            }
+        }
+        @supports not (animation-timeline: view()) {
+            .section-title { animation: glassRise 0.55s var(--ease-glide) both; }
+        }
+    }
+    @keyframes sectionReveal {
+        from { opacity: 0.4; translate: 0 18px; }
+        to { opacity: 1; translate: 0 0; }
+    }
+
+    /* 移动端：关闭最耗 GPU 的装饰层，只保留柔光与玻璃质感 */
+    @media (max-width: 900px) {
+        .hero-aurora::before,
+        .hero-aurora::after,
+        .hero-orb-violet { display: none; }
+        [data-testid="stSidebar"]::after { display: none; }
+    }
+
+    /* 降低动效偏好：显式关闭本页新增的装饰性动画（内容与布局不受影响） */
+    @media (prefers-reduced-motion: reduce) {
+        .metric-card,
+        .insight-box,
+        .section-title,
+        .hero-glass,
+        .hero-chip { animation: none !important; }
+        .metric-card::after,
+        .hero-glass::after,
+        [data-testid="stExpander"]::before,
+        .footer::before,
+        .hero-aurora::before,
+        .hero-aurora::after { animation: none !important; }
     }
 
     /* ===================================================================== */

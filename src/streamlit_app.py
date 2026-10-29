@@ -64,6 +64,8 @@ st.set_page_config(
 )
 
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+# 液态玻璃增强：光标跟随高光（渐进增强，不支持的浏览器自动退化为静态高光）
+widgets.pointer_glow()
 charts.setup_plot_style()
 
 # 记录 Web 运行环境版本：排查静态 / 媒体文件（图表 PNG）下发问题时非常关键。
@@ -2687,6 +2689,7 @@ st.markdown(
     f'<span class="hero-orb hero-orb-blue"></span>'
     f'<span class="hero-orb hero-orb-pink"></span>'
     f'<span class="hero-orb hero-orb-teal"></span>'
+    f'<span class="hero-orb hero-orb-violet"></span>'
     f'<span class="hero-sheen"></span>'
     f"</div>"
     f'<div class="hero-eyebrow">City Living Index · {DATA_REF_YEAR}</div>'

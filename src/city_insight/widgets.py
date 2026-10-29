@@ -8,6 +8,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 from .config import APP_VERSION, DATA_REF_YEAR
 
@@ -152,6 +153,93 @@ def sidebar_nav(*, show_maps: bool = True, expanded: bool = True) -> None:
     count = sidebar_nav_count(show_maps=show_maps)
     with st.expander(f"🧭 快速导航（{count} 个章节）", expanded=expanded):
         st.markdown(sidebar_nav_html(show_maps=show_maps), unsafe_allow_html=True)
+
+
+# 光标跟随高光：把指针位置写成 CSS 变量（--glass-x / --glass-y），
+# 由 styles.CUSTOM_CSS 中的玻璃背景层消费。脚本优先通过 st.html 内联注入主页
+# （旧版 Streamlit 退回同源 iframe 的 components.html）；任何跨域 / 沙箱限制
+# 都会被 try/catch 吞掉，退化为「固定在顶部的静态高光」，页面功能不受影响。
+_POINTER_GLOW_SCRIPT = """
+<script>
+(function () {
+  try {
+    var host = window.parent;
+    if (!host || host.__liquidGlassPointer) { return; }
+    if (host.matchMedia && host.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      return;
+    }
+    if (host.matchMedia && !host.matchMedia('(hover: hover)').matches) { return; }
+    var doc = host.document;
+    var selector = [
+      '.metric-card', '.insight-box', '.section-title', '.hero-glass',
+      '[data-testid="stExpander"]', '[data-testid="stImageContainer"]',
+      '[data-testid="stIFrame"]', '.footer'
+    ].join(',');
+    var frame = 0;
+    var current = null;
+    var pointerX = 0;
+    var pointerY = 0;
+
+    var paint = function () {
+      frame = 0;
+      var el = current;
+      if (!el || !el.isConnected) { return; }
+      var rect = el.getBoundingClientRect();
+      if (rect.width < 1 || rect.height < 1) { return; }
+      el.style.setProperty('--glass-x', (((pointerX - rect.left) / rect.width) * 100).toFixed(2) + '%');
+      el.style.setProperty('--glass-y', (((pointerY - rect.top) / rect.height) * 100).toFixed(2) + '%');
+    };
+
+    doc.addEventListener('pointermove', function (event) {
+      if (event.pointerType && event.pointerType !== 'mouse') { return; }
+      var target = event.target;
+      var el = target && target.closest ? target.closest(selector) : null;
+      if (!el) { return; }
+      current = el;
+      pointerX = event.clientX;
+      pointerY = event.clientY;
+      if (!frame) { frame = host.requestAnimationFrame(paint); }
+    }, { passive: true, capture: true });
+
+    doc.addEventListener('pointerout', function (event) {
+      var target = event.target;
+      var el = target && target.closest ? target.closest(selector) : null;
+      if (el && !el.contains(event.relatedTarget)) {
+        el.style.removeProperty('--glass-x');
+        el.style.removeProperty('--glass-y');
+      }
+    }, { passive: true, capture: true });
+
+    host.__liquidGlassPointer = true;
+  } catch (error) {
+    /* 跨域 / 沙箱 / 旧浏览器：静默降级，不影响任何功能 */
+  }
+})();
+</script>
+"""
+
+
+def pointer_glow() -> None:
+    """启用玻璃面的光标跟随高光（渐进增强，失败时自动降级）。
+
+    优先使用 ``st.html(..., unsafe_allow_javascript=True)``：内容不放进 iframe，
+    不会在页面顶部留下额外的组件占位；Streamlit 版本较旧时不支持该参数，
+    退回零高度 components.html。两种方式都在主页面只绑定一次监听器
+    （以 ``window.__liquidGlassPointer`` 做幂等标记），Streamlit rerun 不会
+    重复叠加；只更新当前悬停元素的 CSS 变量，并用 requestAnimationFrame
+    合帧，避免逐事件重排。
+    """
+    try:
+        st.html(_POINTER_GLOW_SCRIPT, unsafe_allow_javascript=True)
+        return
+    except TypeError:  # 旧版本 Streamlit 没有 unsafe_allow_javascript 参数
+        pass
+    except Exception:  # pragma: no cover - 注入失败只失去增强效果
+        return
+    try:
+        components.html(_POINTER_GLOW_SCRIPT, height=0, scrolling=False)
+    except Exception:  # pragma: no cover - 组件环境不可用时只失去增强效果
+        pass
 
 
 def insight_box(html: str, tone: str | None = None) -> None:
