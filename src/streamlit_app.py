@@ -170,6 +170,22 @@ except Exception:  # noqa: BLE001 - 取不到时退化为固定值，渲染逻�
     _MAX_CONTENT_WIDTH = 1460
 
 
+def _half_column_figsize(
+    rows: int,
+    *,
+    width: float = 6.2,
+    min_height: float = 3.8,
+    max_height: float = 10.5,
+) -> tuple[float, float]:
+    """半宽列中横向图表的画布尺寸（宽约 6.2 英寸）。
+
+    st.pyplot 会把 PNG 缩放到列宽：画布越宽，屏幕上的字号就被压得越小。
+    页面半宽列约 500–600px，6.2in 画布能让 10pt 刻度保持约 10px 的可读
+    字号；高度随条目数增长，保证条形之间留出足够行距、标签不会互相挤压。
+    """
+    return (width, min(max(min_height, rows * 0.3 + 1.8), max_height))
+
+
 def _display_dpi(fig: plt.Figure) -> int:
     """按 Streamlit 实际下发的宽度反推重绘 dpi，省掉一次缩放与重编码。
 
@@ -550,7 +566,7 @@ def _abs_error_series(backtest: pd.DataFrame) -> pd.Series:
 # ===========================================================================
 def render_association(filtered_df: pd.DataFrame, main_color: str) -> None:
     """第一节：核心指标关联分析。"""
-    widgets.section_title("📈 核心指标关联分析")
+    widgets.section_title("📈 核心指标关联分析", anchor="sec-association")
 
     col_left, col_right = st.columns(2)
     with col_left:
@@ -605,7 +621,12 @@ def render_association(filtered_df: pd.DataFrame, main_color: str) -> None:
     with col_hm:
         st.markdown("### 指标相关性矩阵")
         if len(filtered_df) >= 3:
-            render_fig(charts.correlation_heatmap(filtered_df, METRIC_COLS))
+            # 与右侧分布图统一画布高度：两列图表底缘对齐，避免一高一矮的错位感
+            render_fig(
+                charts.correlation_heatmap(
+                    filtered_df, METRIC_COLS, figsize=(6.2, 4.9)
+                )
+            )
         else:
             st.info("筛选后的样本量不足，无法绘制相关性热力图。")
 
@@ -621,6 +642,7 @@ def render_association(filtered_df: pd.DataFrame, main_color: str) -> None:
                 color=main_color,
                 title=f"{COLUMN_LABELS.get(dist_metric, dist_metric)} 分布",
                 xlabel=METRIC_UNITS.get(dist_metric, dist_metric),
+                figsize=(6.2, 4.9),
             )
             render_fig(fig)
         else:
@@ -637,7 +659,7 @@ def render_city_comparison(
     Args:
         stats: 主流程已算好的筛选范围汇总量（避免在此重复统计一次均值）。
     """
-    widgets.section_title("🔬 城市对比与画像")
+    widgets.section_title("🔬 城市对比与画像", anchor="sec-city")
 
     # 「城市 → 行」索引只建一次：下拉选项与城市画像取值都复用它，
     # 省掉画像里重复的一次全表布尔扫描（drop_duplicates 保证 city 唯一，
@@ -657,6 +679,7 @@ def render_city_comparison(
             default=default_cities,
             key="cmp_cities",
             format_func=fmt_city,
+            placeholder="选择城市（可搜索）",
         )
 
     with profile_col:
@@ -719,7 +742,7 @@ def _render_city_profile(
 
     col_profile, col_detail = st.columns([1, 1.2])
     with col_profile:
-        render_fig(charts.city_profile_chart(pct, color=main_color))
+        render_fig(charts.city_profile_chart(pct, color=main_color, figsize=(6.2, 5.0)))
     with col_detail:
         st.markdown(
             f"#### 📋 {profile_city} 数据一览（筛选范围：{len(city_lookup)} 个城市）"
@@ -952,6 +975,7 @@ def _render_ai_form(
             options=list(ai_advisor.PRIORITY_OPTIONS),
             default=[ai_advisor.PRIORITY_LOW_COST, "通勤便利"],
             key="ai_priorities",
+            placeholder="选择你最看重的生活维度",
             help="优先级用于本地替代城市匹配与提示词；未覆盖的维度会明确标注为数据未覆盖。",
         )
         free_text = st.text_area(
@@ -1042,7 +1066,7 @@ def render_ai_advisor(
     province_map: dict[str, str],
 ) -> None:
     """第十一节：AI 城市生活成本顾问（本地检索 + DeepSeek 文本生成）。"""
-    widgets.section_title("🤖 AI 城市生活成本顾问（DeepSeek）")
+    widgets.section_title("🤖 AI 城市生活成本顾问（DeepSeek）", anchor="sec-ai")
 
     creds = api_config.get_api_credentials("deepseek")
     _render_ai_status(creds)
@@ -1130,7 +1154,7 @@ def render_forecast(
     province_map: dict[str, str],
 ) -> None:
     """第三节：房价趋势分析与机器学习预测。"""
-    widgets.section_title("🤖 房价趋势分析与机器学习预测")
+    widgets.section_title("🤖 房价趋势分析与机器学习预测", anchor="sec-forecast")
 
     with st.expander("📖 预测方法论与数据口径说明", expanded=False):
         st.markdown(
@@ -1335,7 +1359,7 @@ def _render_forecast_result(
             fig2 = charts.barh_ranking(
                 imp_df, "importance", label_col="特征", color="#8b5cf6",
                 title="对下一年房价涨幅的贡献",
-                xlabel="特征重要性", fmt="{:.3f}", figsize=(6.4, 4.4),
+                xlabel="特征重要性", fmt="{:.3f}", figsize=(5.2, 5.4),
             )
             render_fig(fig2)
             st.caption(
@@ -1486,7 +1510,7 @@ def render_happiness_ranking(
     filtered_df: pd.DataFrame, main_color: str
 ) -> None:
     """第四节：城市幸福度排名。"""
-    widgets.section_title("😊 城市幸福度排名")
+    widgets.section_title("😊 城市幸福度排名", anchor="sec-happiness")
 
     rank_col, table_col = st.columns([1.5, 1])
 
@@ -1508,6 +1532,7 @@ def render_happiness_ranking(
             title=f"幸福度 {'Top' if not ascending else 'Bottom'} {n_cities} 城市",
             xlabel=METRIC_UNITS["happiness"],
             fmt="{:.1f}",
+            figsize=_half_column_figsize(len(chart_data)),
         )
         render_fig(fig)
 
@@ -1520,13 +1545,14 @@ def render_happiness_ranking(
                 ["city", "province", "happiness", "income", "house_price",
                  "value_index", "composite_score"],
             ),
-            height=420,
+            # 表格高度随条目数增长，与左侧条形图高度大致对齐（上限 560px 防止过长）
+            height=int(min(560, max(320, len(top_n_happy) * 30 + 80))),
         )
 
 
 def render_affordability(filtered_df: pd.DataFrame, main_color: str) -> None:
     """第五节：住房可负担性指数分析。"""
-    widgets.section_title("🏠 住房可负担性指数分析")
+    widgets.section_title("🏠 住房可负担性指数分析", anchor="sec-affordability")
     widgets.insight_box(
         "<strong>💡 住房可负担性指数 = 年收入 ÷ 房价</strong><br>"
         "指数越高，说明该城市居民用年收入能购买的住房面积越大，住房压力相对越小。",
@@ -1547,17 +1573,22 @@ def render_affordability(filtered_df: pd.DataFrame, main_color: str) -> None:
             title=f"住房可负担性 Top {n_value} 城市",
             xlabel=METRIC_UNITS["value_index"],
             fmt="{:.2f}",
+            figsize=_half_column_figsize(len(chart_data)),
         )
         render_fig(fig)
 
     with aff_col2:
         st.markdown("### 📉 全量城市可负担指数分布")
-        fig = charts.affordability_overview(filtered_df, color=main_color)
+        # 与左侧排名图同宽同高：两列图表底缘对齐，避免右侧留下一大片空白
+        overview_height = _half_column_figsize(len(chart_data))[1]
+        fig = charts.affordability_overview(
+            filtered_df, color=main_color, figsize=(6.2, overview_height)
+        )
         render_fig(fig)
 
 def render_top20(filtered_df: pd.DataFrame) -> None:
     """第六节：TOP 20 住房可负担指数详表。"""
-    widgets.section_title("🏆 住房可负担指数 TOP 20 城市详情")
+    widgets.section_title("🏆 住房可负担指数 TOP 20 城市详情", anchor="sec-top20")
 
     top20 = analysis.top_n(filtered_df, "value_index", 20)
 
@@ -1583,13 +1614,14 @@ def render_top20(filtered_df: pd.DataFrame) -> None:
             title="TOP 20 住房可负担指数",
             xlabel=METRIC_UNITS["value_index"],
             fmt="{:.2f}",
+            figsize=_half_column_figsize(len(sorted_top)),
         )
         render_fig(fig)
 
 
 def render_outliers(filtered_df: pd.DataFrame, main_color: str) -> None:
     """第七节：异常值检测（IQR 方法）。"""
-    widgets.section_title("🔍 异常值检测（IQR 方法）")
+    widgets.section_title("🔍 异常值检测（IQR 方法）", anchor="sec-outliers")
 
     outlier_happy_mask = analysis.detect_outliers(filtered_df["happiness"])
     outlier_value_mask = analysis.detect_outliers(filtered_df["value_index"])
@@ -1609,6 +1641,7 @@ def render_outliers(filtered_df: pd.DataFrame, main_color: str) -> None:
             xlabel="幸福度指数",
             ylabel="可负担指数",
             title="幸福度 vs 可负担指数（红色为异常值）",
+            figsize=(6.2, 5.0),
         )
         render_fig(fig)
 
@@ -1749,7 +1782,7 @@ def render_career_guidance(
     province_map: dict[str, str],
 ) -> None:
     """第十一节：就业指导与产业推荐（基于爬取的城市支柱产业数据库）。"""
-    widgets.section_title("🧭 就业指导与产业推荐")
+    widgets.section_title("🧭 就业指导与产业推荐", anchor="sec-career")
 
     if industry_df is None or industry_df.empty:
         st.info(
@@ -1883,6 +1916,7 @@ def _render_career_profile_form() -> career.CareerProfile:
             options=list(SKILL_TAGS),
             default=[tag for tag in ("Python", "数据分析") if tag in SKILL_TAGS],
             key="career_skills",
+            placeholder="选择你的技能标签",
             help=f"标签来自 {len(CATEGORIES)} 个行业大类的核心技能库（industry_kb.SKILL_TAGS）",
         )
         categories = st.multiselect(
@@ -1890,6 +1924,7 @@ def _render_career_profile_form() -> career.CareerProfile:
             options=list(CATEGORIES),
             default=[],
             key="career_categories",
+            placeholder="不限行业大类",
         )
 
     with col_weight:
@@ -2016,7 +2051,7 @@ def _render_career_recommendations(
                 color_map=CONTRIBUTION_COLORS,
                 title="推荐项匹配度构成（加权得分）",
                 # 高度补偿：为底部图例空白带预留空间，避免图例压住底部条形
-                figsize=(6.6, max(4.2, len(contributions) * 0.42 + 2.5)),
+                figsize=(6.0, max(4.2, len(contributions) * 0.42 + 2.5)),
             )
         )
         st.caption(
@@ -2279,6 +2314,7 @@ def _render_career_skill_map(
             charts.skill_demand_chart(
                 combined, color=main_color,
                 title=f"技能需求热度 TOP {len(combined)}",
+                figsize=(6.4, max(3.6, len(combined) * 0.34 + 2)),
             )
         )
         st.caption(
@@ -2335,7 +2371,7 @@ def render_province_aggregate(
     filtered_df: pd.DataFrame, main_color: str
 ) -> pd.DataFrame:
     """第八节：省份维度聚合分析，返回省份聚合表供末节 Tab 复用。"""
-    widgets.section_title("🗺️ 省份维度聚合分析")
+    widgets.section_title("🗺️ 省份维度聚合分析", anchor="sec-province")
 
     province_agg = analysis.aggregate_by_province(filtered_df)
 
@@ -2352,6 +2388,7 @@ def render_province_aggregate(
             title="平均幸福度 Top 15 省份",
             xlabel="平均幸福度",
             fmt="{:.1f}",
+            figsize=_half_column_figsize(len(top_provinces)),
         )
         render_fig(fig)
 
@@ -2368,6 +2405,7 @@ def render_province_aggregate(
             title="平均可负担指数 Top 15 省份",
             xlabel="平均可负担指数",
             fmt="{:.2f}",
+            figsize=_half_column_figsize(len(province_value)),
         )
         render_fig(fig)
 
@@ -2377,7 +2415,7 @@ def render_province_aggregate(
         prov_show.index = range(1, len(prov_show) + 1)
         st.dataframe(
             widgets.fmt_table(prov_show, {"平均幸福度": "{:.1f}"}),
-            height=350,
+            height=420,
             width="stretch",
         )
     with prov_table2:
@@ -2393,7 +2431,7 @@ def render_province_aggregate(
                 gradient_col="平均可负担指数",
                 cmap="Greens",
             ),
-            height=350,
+            height=420,
             width="stretch",
         )
 
@@ -2402,7 +2440,7 @@ def render_province_aggregate(
 
 def render_maps() -> None:
     """第九节：地理可视化地图（pyecharts 生成的静态 HTML）。"""
-    widgets.section_title("🗺️ 中国城市地理分布地图")
+    widgets.section_title("🗺️ 中国城市地理分布地图", anchor="sec-maps")
     map_col1, map_col2 = st.columns(2)
     with map_col1:
         st.markdown("### 中国各省市宜居度地图")
@@ -2421,7 +2459,7 @@ def render_data_browser(
     industry_df: pd.DataFrame | None = None,
 ) -> None:
     """第十节：完整数据浏览与数据质量报告。"""
-    widgets.section_title("📋 完整数据浏览")
+    widgets.section_title("📋 完整数据浏览", anchor="sec-data")
 
     tab1, tab2, tab3 = st.tabs(["🏙️ 城市明细数据", "🗺️ 省份聚合数据", "✅ 数据质量报告"])
 
@@ -2575,13 +2613,24 @@ with st.sidebar:
     st.markdown("## 🏙️ 分析控制面板")
     st.caption(f"数据参考年份 {DATA_REF_YEAR} · 版本 v{APP_VERSION}")
 
+    # 导航占位符：导航项依赖下方的「显示地理地图」开关，因此先占位、
+    # 待开关求值后再回填，既能显示在侧边栏顶部，又能随开关联动。
+    nav_slot = st.empty()
+
     selected_provinces = st.multiselect(
         "选择省份（可多选，留空=全部）",
         options=sorted(df["province"].unique()),
         default=[],
+        placeholder="全部省份",
+        key="province_filter",
     )
 
-    city_keyword = st.text_input("🔎 城市关键词过滤（可留空）", value="")
+    city_keyword = st.text_input(
+        "🔎 城市关键词过滤（可留空）",
+        value="",
+        placeholder="例如：杭州、成都",
+        key="city_keyword_filter",
+    )
 
     st.markdown("---")
     st.markdown("### 📊 数值筛选")
@@ -2607,6 +2656,10 @@ with st.sidebar:
 
     show_maps = st.toggle("显示地理地图（HTML 组件）", value=True, key="toggle_maps")
 
+    # 回填章节导航（原生折叠面板 + 页内锚点跳转，不触发 rerun）
+    with nav_slot.container():
+        widgets.sidebar_nav(show_maps=show_maps)
+
 # ---------------- 数据筛选 ----------------
 mask = pd.Series(True, index=df.index)
 if selected_provinces:
@@ -2629,7 +2682,7 @@ if filtered_df.empty:
 # ---------------- 页面主体：标题与指标卡片 ----------------
 st.markdown(
     '<div class="scroll-progress" aria-hidden="true"></div>'
-    f'<div class="hero-glass">'
+    f'<div class="hero-glass" id="sec-overview">'
     f'<div class="hero-aurora" aria-hidden="true">'
     f'<span class="hero-orb hero-orb-blue"></span>'
     f'<span class="hero-orb hero-orb-pink"></span>'

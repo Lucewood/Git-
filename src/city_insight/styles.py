@@ -543,15 +543,18 @@ CUSTOM_CSS = """
         letter-spacing: 0.03em;
         color: #33415f;
         opacity: 1;
+        overflow-wrap: anywhere;
     }
     .metric-card h1 {
         margin: 0;
-        font-size: 1.9rem;
+        /* 6 列指标卡在 1440px 左右容易挤出卡片：按视口宽度平滑收缩 */
+        font-size: clamp(1.35rem, 0.95vw + 0.85rem, 1.9rem);
         line-height: 1.15;
         font-weight: 700;
         letter-spacing: -0.02em;
         color: #0a1327;
         font-variant-numeric: tabular-nums;
+        overflow-wrap: anywhere;
     }
     .metric-card .sub {
         margin-top: 0.35rem;
@@ -733,6 +736,83 @@ CUSTOM_CSS = """
         backdrop-filter: blur(12px);
         box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
     }
+
+    /* =====================================================================
+       8.1 侧边栏章节导航（折叠面板 + 页内锚点跳转，不触发 rerun）
+       ===================================================================== */
+    /* 导航本体放在 st.expander 内：这里只负责链接列表，不再叠加第二层玻璃底 */
+    .sidebar-nav-links { display: flex; flex-direction: column; gap: 0; }
+    .nav-group { margin-top: 0.2rem; }
+    .nav-group-title {
+        padding: 0.14rem 0.36rem;
+        font-size: 0.62rem;
+        font-weight: 700;
+        letter-spacing: 0.16em;
+        color: #6b7899;
+    }
+    .nav-link {
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.35rem;
+        margin: 0.1rem 0;
+        padding: 0.33rem 0.5rem 0.33rem 0.62rem;
+        border-radius: 10px;
+        border: 1px solid transparent;
+        color: #24314e !important;
+        font-size: 0.78rem;
+        font-weight: 600;
+        line-height: 1.32;
+        text-decoration: none !important;
+        transition: background 0.18s ease, border-color 0.18s ease,
+            transform 0.18s ease, box-shadow 0.18s ease;
+    }
+    /* 左侧小光条：悬停时浮现，作为当前指向的视觉提示 */
+    .nav-link::before {
+        content: "";
+        position: absolute;
+        left: 0.16rem;
+        top: 50%;
+        width: 3px;
+        height: 0.95em;
+        border-radius: 99px;
+        background: linear-gradient(180deg, #6ea8ff, #8b7cf6 55%, #3fd0bd);
+        opacity: 0;
+        transform: translateY(-50%) scaleY(0.6);
+        transition: opacity 0.18s ease, transform 0.18s ease;
+    }
+    .nav-link > span:first-child {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .nav-link:hover {
+        background: rgba(255, 255, 255, 0.72);
+        border-color: rgba(255, 255, 255, 0.95);
+        transform: translateX(2px);
+        box-shadow: 0 8px 20px -18px rgba(20, 35, 80, 0.55),
+            inset 0 1px 0 rgba(255, 255, 255, 0.95);
+    }
+    .nav-link:hover::before { opacity: 1; transform: translateY(-50%) scaleY(1); }
+    .nav-link:active { transform: translateX(1px); }
+    .nav-arrow {
+        flex: 0 0 auto;
+        color: #8794b4;
+        font-size: 0.92em;
+        transition: transform 0.18s ease, color 0.18s ease;
+    }
+    .nav-link:hover .nav-arrow { color: #4d5f8c; transform: translateX(2px); }
+    .nav-top {
+        justify-content: center;
+        margin-top: 0.5rem;
+        padding: 0.32rem 0.5rem;
+        font-size: 0.72rem;
+        color: #3a4a70 !important;
+        background: rgba(255, 255, 255, 0.5);
+        border-color: rgba(255, 255, 255, 0.7);
+    }
+    .nav-top::before { content: none; }
 
     /* =====================================================================
        9. 输入控件：半透明玻璃内胆
@@ -1246,6 +1326,48 @@ CUSTOM_CSS = """
             animation: none !important;
         }
         .metric-card:hover { transform: none; }
+    }
+
+    /* =====================================================================
+       16. 排版对齐 / 防重叠（列宽、卡片、图表、标签页、锚点）
+       ===================================================================== */
+    /* 列内元素不得撑破列宽：否则窄列里的图片 / 表格会溢出到相邻列，造成重叠 */
+    [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] { min-width: 0; }
+    [data-testid="stImageContainer"],
+    [data-testid="stImageContainer"] img,
+    [data-testid="stIFrame"] { max-width: 100%; }
+    [data-testid="stImageContainer"] img { display: block; height: auto; }
+
+    /* 同一行指标卡等高：副标题换行时卡片底缘仍然对齐（不支持 :has 时退回 min-height） */
+    [data-testid="stColumn"]:has(.metric-card) > [data-testid="stVerticalBlock"],
+    [data-testid="stColumn"]:has(.metric-card) [data-testid="stMarkdown"],
+    [data-testid="stColumn"]:has(.metric-card) [data-testid="stMarkdownContainer"] {
+        height: 100%;
+    }
+    .metric-card { min-width: 0; }
+
+    /* 标签页较多时横向滚动，避免标签互相挤压或被裁切 */
+    [data-testid="stTabs"] [data-baseweb="tab-list"] {
+        overflow-x: auto;
+        flex-wrap: nowrap;
+        scrollbar-width: thin;
+    }
+    [data-baseweb="tab"] { white-space: nowrap; }
+
+    /* 锚点跳转的顶部留白：章节标题不会被顶部工具栏遮住。
+       锚点是标题前一个零高度 div（见 widgets.section_title），标题自身的
+       margin-top 会与它一起计入滚动位置，因此留白取一个较小的值即可。 */
+    .section-anchor {
+        height: 0;
+        overflow: hidden;
+        scroll-margin-top: 4.2rem;
+    }
+    .hero-glass[id] { scroll-margin-top: 2.2rem; }
+    .stApp,
+    [data-testid="stMain"] { scroll-behavior: smooth; }
+    @media (prefers-reduced-motion: reduce) {
+        .stApp,
+        [data-testid="stMain"] { scroll-behavior: auto; }
     }
 
     /* ===================================================================== */

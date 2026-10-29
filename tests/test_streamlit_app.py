@@ -81,6 +81,74 @@ def test_keyword_regex_special_char_no_crash():
     assert len(at.warning) > 0
 
 
+# ---------------------------------------------------------------------------
+# 侧边栏章节导航（锚点跳转）
+# ---------------------------------------------------------------------------
+def _nav_html(at) -> str:
+    """汇总侧边栏中的导航 HTML（导航位于折叠面板内的 markdown 中）。"""
+    blocks = [block.value for block in at.sidebar.markdown]
+    for expander in at.sidebar.expander:
+        blocks.extend(block.value for block in expander.markdown)
+    return "\n".join(blocks)
+
+
+def test_sidebar_nav_anchors_match_page_sections():
+    """导航里的每个锚点都必须在页面上有对应章节，避免点击后无跳转目标。"""
+    at = _build_app()
+    at.run()
+    assert not at.exception, f"应用抛出了异常: {at.exception}"
+
+    nav_html = _nav_html(at)
+    assert "sidebar-nav" in nav_html, "侧边栏应渲染章节导航"
+    anchors = re.findall(r'href="#(sec-[a-z0-9-]+)"', nav_html)
+    assert len(set(anchors)) >= 10, f"导航章节过少：{sorted(set(anchors))}"
+
+    page_html = "\n".join(block.value for block in at.markdown)
+    missing = sorted({a for a in anchors if f'id="{a}"' not in page_html})
+    assert not missing, f"导航锚点在页面中缺少目标章节：{missing}"
+
+
+def test_sidebar_nav_hides_map_link_when_maps_disabled():
+    """关闭「显示地理地图」后，导航中不应再出现地图章节链接。"""
+    at = _build_app()
+    at.run()
+    toggle = next(t for t in at.toggle if "显示地理地图" in t.label)
+    toggle.set_value(False).run()
+    assert not at.exception, f"关闭地图后抛出了异常: {at.exception}"
+
+    nav_html = _nav_html(at)
+    assert 'href="#sec-maps"' not in nav_html
+    # 其它章节不受影响，导航仍然可用
+    assert 'href="#sec-data"' in nav_html
+
+
+def test_section_anchor_is_standalone_div_before_title():
+    """锚点必须是标题前的独立 div。
+
+    回归背景：Streamlit 渲染 markdown 标题时会把 ``<h2>`` 的 id 重写成
+    自动生成的哈希（实测 1.58），若把锚点直接写在标题上，侧边栏链接会
+    找不到目标、点击无反应。普通 div 的 id 会被保留。
+    """
+    at = _build_app()
+    at.run()
+    page_html = "\n".join(block.value for block in at.markdown)
+    pattern = (
+        r'<div id="sec-association" class="section-anchor"[^>]*></div>'
+        r'<h2 class="section-title">'
+    )
+    assert re.search(pattern, page_html), "锚点应是标题前的独立空 div"
+
+
+def test_sidebar_nav_count_and_links_follow_map_flag():
+    """导航章节数与地图开关一致（纯函数，无需运行整页）。"""
+    from city_insight import widgets
+
+    assert widgets.sidebar_nav_count(show_maps=True) == 13
+    assert widgets.sidebar_nav_count(show_maps=False) == 12
+    assert 'href="#sec-maps"' in widgets.sidebar_nav_html(show_maps=True)
+    assert 'href="#sec-maps"' not in widgets.sidebar_nav_html(show_maps=False)
+
+
 def test_forecast_section_city_and_horizon_interaction():
     """房价预测区块：切换城市并调整预测年数后页面仍正常渲染。"""
     at = _build_app()

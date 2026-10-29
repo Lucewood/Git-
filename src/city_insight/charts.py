@@ -85,6 +85,39 @@ def _add_bar_labels(ax, bars, values, fmt: str = "{:.2f}", offset: float = 0.05,
         )
 
 
+def _fit_bar_labels(ax, values, *, extra: float = 0.16) -> None:
+    """按数值上限扩展横轴，给条形右侧的数值标签留出空白。
+
+    ``tight_layout`` 只调整画布边距、不会改变数据坐标范围，因此最大值对应的
+    数值标签容易被坐标区裁掉（表现为最后一位数字缺失）。这里统一留出
+    ``extra`` 比例的右侧空白，保证所有标签完整可见。
+    """
+    series = pd.to_numeric(pd.Series(list(values)), errors="coerce").dropna()
+    if series.empty:
+        return
+    vmax = float(series.max())
+    if not np.isfinite(vmax) or vmax <= 0:
+        return
+    ax.set_xlim(0.0, vmax * (1.0 + extra))
+
+
+def _fit_yticks(ax, labels, *, base: float = 10.0) -> None:
+    """按条目数量与标签长度自适应纵轴字号，避免密集条形图的文字互相重叠。"""
+    labels = [str(label) for label in labels]
+    count = len(labels)
+    longest = max((len(label) for label in labels), default=0)
+    size = base
+    if count > 24:
+        size -= 2.0
+    elif count > 16:
+        size -= 1.0
+    if longest > 16:
+        size -= 1.5
+    elif longest > 10:
+        size -= 0.5
+    ax.tick_params(axis="y", labelsize=max(6.5, size))
+
+
 # ---------------------------------------------------------------------------
 # 关联分析
 # ---------------------------------------------------------------------------
@@ -175,7 +208,9 @@ def barh_ranking(
         ax.axis("off")
         return _finalize(fig)
     if figsize is None:
-        figsize = (8, max(4, n * 0.25 + 2))
+        # 高度随条目数增长，但设上限：Top 50 时继续线性拉高会让整图超过一屏，
+        # 压缩后反而更难看；上限内减少字号（_fit_yticks）保证标签不重叠。
+        figsize = (8, min(max(4, n * 0.25 + 2), 10.5))
     fig, ax = plt.subplots(figsize=figsize)
     bars = ax.barh(data[label_col], data[column], color=color, edgecolor="white")
     ax.set_xlabel(xlabel, fontsize=11)
@@ -185,6 +220,8 @@ def barh_ranking(
     width_max = data[column].max()
     offset = width_max * 0.02 if width_max > 0 else 0.1
     _add_bar_labels(ax, bars, data[column], fmt=fmt, offset=offset)
+    _fit_bar_labels(ax, data[column])
+    _fit_yticks(ax, data[label_col])
     return _finalize(fig)
 
 
@@ -210,7 +247,12 @@ def affordability_overview(
     ax.set_xlabel("城市排名", fontsize=11)
     ax.set_ylabel("可负担指数", fontsize=11)
     ax.set_title("全国城市住房可负担性全貌", fontsize=13, fontweight="bold")
-    ax.legend(fontsize=9)
+    # 城市按可负担指数降序排列 → 右侧全是短柱，右上角是空白区：
+    # 图例固定放在这里并加白底，避免默认 "best" 压住柱子 / 参考线。
+    ax.legend(
+        fontsize=9, loc="upper right", frameon=True, facecolor="white",
+        framealpha=0.82, edgecolor="none",
+    )
     ax.grid(axis="y", alpha=0.3, linestyle="--")
     return _finalize(fig)
 
@@ -278,6 +320,8 @@ def city_comparison(
                 va="center",
                 fontsize=8,
             )
+        _fit_bar_labels(ax, sub.values, extra=0.18)
+        _fit_yticks(ax, sub.index, base=9.5)
         ax.grid(axis="x", alpha=0.3, linestyle="--")
 
     for i in range(n_metrics, rows * cols):
@@ -309,12 +353,14 @@ def city_profile_chart(
     bars = ax.barh(range(len(sub)), sub.values, color=color, edgecolor="white")
     ax.set_yticks(range(len(sub)))
     ax.set_yticklabels(labels)
-    ax.set_xlim(0, 100)
+    # 上限留 6% 余量：数值标签画在 val + 1 处，100 分的标签不会被右边界裁掉
+    ax.set_xlim(0, 106)
     ax.set_xlabel("百分位排名（0-100）", fontsize=11)
     ax.set_title("该城市在筛选范围内的百分位画像", fontsize=13, fontweight="bold")
     for bar, val in zip(bars, sub.values):
         ax.text(val + 1, bar.get_y() + bar.get_height() / 2, f"{val:.0f}",
                 va="center", fontsize=9)
+    _fit_yticks(ax, labels)
     return _finalize(fig)
 
 
@@ -350,7 +396,8 @@ def outlier_scatter(
     ax.set_xlabel(xlabel, fontsize=11)
     ax.set_ylabel(ylabel, fontsize=11)
     ax.set_title(title, fontsize=13, fontweight="bold")
-    ax.legend(fontsize=9)
+    # 散点分布在全图：给图例加白底，避免文字与散点重叠后难以辨认
+    ax.legend(fontsize=9, frameon=True, facecolor="white", framealpha=0.82, edgecolor="none")
     ax.grid(True, alpha=0.3, linestyle="--")
     return _finalize(fig)
 
@@ -407,7 +454,11 @@ def house_trend_forecast_chart(
     ax.grid(True, alpha=0.3, linestyle="--")
     ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _pos: f"{v:,.0f}"))
     ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
-    ax.legend(fontsize=9, loc="upper left")
+    # 置信区间覆盖大部分绘图区：图例加白底，避免与扇形色块 / 折线叠在一起
+    ax.legend(
+        fontsize=9, loc="upper left", frameon=True,
+        facecolor="white", framealpha=0.82, edgecolor="none",
+    )
     return _finalize(fig)
 
 
@@ -462,7 +513,11 @@ def house_backtest_chart(
     ax.grid(True, alpha=0.3, linestyle="--")
     ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _pos: f"{v:,.0f}"))
     ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
-    ax.legend(fontsize=9, loc="upper left")
+    # 同上：回测区间色块较宽，图例需要白底才能与数据区分开
+    ax.legend(
+        fontsize=9, loc="upper left", frameon=True,
+        facecolor="white", framealpha=0.82, edgecolor="none",
+    )
     return _finalize(fig)
 
 
@@ -735,6 +790,9 @@ def career_score_breakdown(
     ax.grid(axis="x", alpha=0.3, linestyle="--")
     for idx, total in enumerate(left):
         ax.text(total + 0.6, idx, f"{total:.0f}", va="center", fontsize=9)
+    # 末尾总分标签画在条形外侧：留出右侧空白，避免被坐标区裁切
+    _fit_bar_labels(ax, left, extra=0.12)
+    _fit_yticks(ax, order)
     # 图例放在坐标区底部预留的空白带内：
     # 行数较多（展示条数多）时坐标区内空间不足，图例会压住底部条形与数值标签。
     _place_legend_in_bottom_band(
@@ -815,7 +873,10 @@ def salary_demand_scatter(
     ax.set_ylabel(ylabel, fontsize=11)
     ax.set_title(title, fontsize=13, fontweight="bold")
     ax.grid(True, alpha=0.3, linestyle="--")
-    ax.legend(fontsize=9, loc="lower right")
+    ax.legend(
+        fontsize=9, loc="lower right", frameon=True,
+        facecolor="white", framealpha=0.82, edgecolor="none",
+    )
     return _finalize(fig)
 
 
@@ -859,6 +920,8 @@ def skill_demand_chart(
         ax, bars, ordered[value_col], fmt=fmt,
         offset=width_max * 0.02 if width_max > 0 else 0.1,
     )
+    _fit_bar_labels(ax, ordered[value_col])
+    _fit_yticks(ax, ordered[label_col])
     ax.set_xlabel(xlabel, fontsize=11)
     ax.set_title(title, fontsize=13, fontweight="bold")
     ax.grid(axis="x", alpha=0.3, linestyle="--")
@@ -867,7 +930,13 @@ def skill_demand_chart(
             plt.Rectangle((0, 0), 1, 1, color=highlight_color),
             plt.Rectangle((0, 0), 1, 1, color=color),
         ]
-        ax.legend(handles, [highlight_label, "建议补强"], fontsize=9, loc="lower right")
+        # 条形按热度升序排列 → 最小条在底部，右下角是短条区域：
+        # 图例放这里不会压住条形与数值标签，并加白底以便在网格线上保持清晰
+        ax.legend(
+            handles, [highlight_label, "建议补强"], fontsize=9,
+            loc="lower right", frameon=True, facecolor="white",
+            framealpha=0.82, edgecolor="none",
+        )
     return _finalize(fig)
 
 

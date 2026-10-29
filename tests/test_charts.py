@@ -52,6 +52,49 @@ def test_barh_ranking(sample_df):
     _assert_fig(fig)
 
 
+def test_barh_ranking_value_labels_stay_inside_axes():
+    """条形末端的数值标签必须落在坐标区内，不能被右边界裁掉。"""
+    import pandas as pd
+
+    values = [98.5, 91.2, 88.0, 76.4, 70.0, 62.3, 55.5, 48.0, 40.2, 33.1, 25.0, 12.6]
+    data = pd.DataFrame(
+        {
+            "city": [f"城市{index:02d}" for index in range(len(values))],
+            "value": values,
+        }
+    ).sort_values("value")
+    fig = charts.barh_ranking(
+        data, "value", color="#667eea", title="t", xlabel="x", fmt="{:.1f}",
+    )
+    _assert_fig(fig)
+    fig.canvas.draw()
+    ax = fig.axes[0]
+    assert ax.texts, "条形图应带数值标签"
+    right = ax.get_window_extent().x1
+    for text in ax.texts:
+        assert text.get_window_extent().x1 <= right + 0.5, (
+            f"数值标签 {text.get_text()} 超出坐标区右边界"
+        )
+
+
+def test_barh_ranking_dense_ticks_use_smaller_font():
+    """条目很多时自动收紧纵轴字号与画布高度，避免标签重叠、整图过高。"""
+    import pandas as pd
+
+    data = pd.DataFrame(
+        {
+            "city": [f"城市{index:02d}" for index in range(50)],
+            "value": [float(50 - index) for index in range(50)],
+        }
+    ).sort_values("value")
+    fig = charts.barh_ranking(data, "value", color="#667eea", title="t", xlabel="x")
+    _assert_fig(fig)
+    fig.canvas.draw()
+    sizes = [label.get_fontsize() for label in fig.axes[0].get_yticklabels()]
+    assert sizes and max(sizes) < 10, f"密集条形图未收紧字号：{sizes}"
+    assert fig.get_figheight() <= 10.5 + 1e-6
+
+
 def test_affordability_overview(sample_df):
     _assert_fig(charts.affordability_overview(sample_df, color="steelblue"))
 
