@@ -99,9 +99,16 @@ def test_sidebar_nav_anchors_match_page_sections():
     assert not at.exception, f"应用抛出了异常: {at.exception}"
 
     nav_html = _nav_html(at)
-    assert "sidebar-nav" in nav_html, "侧边栏应渲染章节导航"
+    assert "sidebar-nav" in nav_html, "侧边栏应渲染功能导航"
     anchors = re.findall(r'href="#(sec-[a-z0-9-]+)"', nav_html)
-    assert len(set(anchors)) >= 10, f"导航章节过少：{sorted(set(anchors))}"
+    assert len(set(anchors)) >= 15, f"导航章节过少：{sorted(set(anchors))}"
+
+    # 6 个一级模块入口必须全部出现在导航中
+    for anchor in (
+        "sec-overview", "sec-insight", "sec-ranking",
+        "sec-forecast", "sec-advice", "sec-geo",
+    ):
+        assert anchor in anchors, f"导航缺少一级模块入口：{anchor}"
 
     page_html = "\n".join(block.value for block in at.markdown)
     missing = sorted({a for a in anchors if f'id="{a}"' not in page_html})
@@ -139,14 +146,23 @@ def test_section_anchor_is_standalone_div_before_title():
     assert re.search(pattern, page_html), "锚点应是标题前的独立空 div"
 
 
-def test_sidebar_nav_count_and_links_follow_map_flag():
-    """导航章节数与地图开关一致（纯函数，无需运行整页）。"""
+def test_sidebar_nav_modules_and_map_link_follow_flag():
+    """一级导航固定为 6 个模块；地图开关只影响细分章节（纯函数）。"""
     from city_insight import widgets
 
-    assert widgets.sidebar_nav_count(show_maps=True) == 13
-    assert widgets.sidebar_nav_count(show_maps=False) == 12
-    assert 'href="#sec-maps"' in widgets.sidebar_nav_html(show_maps=True)
-    assert 'href="#sec-maps"' not in widgets.sidebar_nav_html(show_maps=False)
+    assert widgets.sidebar_nav_count() == 6
+    assert len(widgets.SIDEBAR_NAV_MODULES) == 6
+
+    html_with = widgets.sidebar_nav_html(show_maps=True)
+    html_without = widgets.sidebar_nav_html(show_maps=False)
+    for module in widgets.SIDEBAR_NAV_MODULES:
+        assert f'href="#{module.anchor}"' in html_with
+        assert f'href="#{module.anchor}"' in html_without
+
+    assert 'href="#sec-maps"' in html_with
+    assert 'href="#sec-maps"' not in html_without
+    # 关闭地图只移除一个细分子项，其余导航入口保持不变
+    assert html_with.count('href="#') == html_without.count('href="#') + 1
 
 
 def test_forecast_section_city_and_horizon_interaction():

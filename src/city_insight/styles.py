@@ -430,16 +430,89 @@ CUSTOM_CSS = """
         100% { transform: translate3d(360%, 0, 0) rotate(14deg); opacity: 0; }
     }
     /* =====================================================================
-       5. 章节标题
+       5. 章节标题（二级）
        ===================================================================== */
+    /* 一级模块标题：编号圆牌 + 标题 + 一句话说明，给长页面建立清晰的段落感 */
+    .module-header {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        margin: 2.2rem 0 0.55rem;
+        padding: 1.1rem 1.35rem;
+        border-radius: var(--radius-lg);
+        border: 1px solid var(--glass-line);
+        background:
+            radial-gradient(320px 180px at var(--glass-x, 50%) var(--glass-y, -10%), rgba(255, 255, 255, 0.4), rgba(255, 255, 255, 0) 72%),
+            radial-gradient(120% 160% at 0% 0%, rgba(110, 152, 255, 0.20), transparent 58%),
+            radial-gradient(120% 160% at 100% 100%, rgba(63, 208, 189, 0.13), transparent 60%),
+            linear-gradient(150deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.48));
+        box-shadow: var(--shadow-soft),
+            inset 0 1px 0 rgba(255, 255, 255, 0.94),
+            inset 0 20px 36px -34px rgba(255, 255, 255, 1);
+        overflow: hidden;
+        backdrop-filter: blur(18px) saturate(160%);
+        transition: border-color 0.3s var(--ease-soft), box-shadow 0.3s var(--ease-soft);
+        animation: glassRise 0.52s var(--ease-glide) both;
+    }
+    .module-header::after {
+        content: "";
+        position: absolute;
+        left: 8%;
+        right: 8%;
+        top: 0;
+        height: 1px;
+        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.98), transparent);
+        opacity: 0.85;
+        pointer-events: none;
+        animation: hairlineBreathe 8s ease-in-out infinite;
+    }
+    .module-header:hover {
+        border-color: rgba(255, 255, 255, 0.98);
+        box-shadow: 0 30px 66px -38px rgba(20, 33, 78, 0.52),
+            inset 0 1px 0 rgba(255, 255, 255, 1),
+            inset 0 20px 36px -34px rgba(255, 255, 255, 1);
+    }
+    .module-step {
+        flex: 0 0 auto;
+        display: grid;
+        place-items: center;
+        width: 2.5rem;
+        height: 2.5rem;
+        border-radius: 50%;
+        font-size: 0.8rem;
+        font-weight: 800;
+        letter-spacing: 0.04em;
+        color: #ffffff;
+        background: linear-gradient(135deg, #33489f 0%, #4b3a9e 55%, #2c6b86 100%);
+        box-shadow: 0 12px 26px -14px rgba(43, 52, 140, 0.75),
+            inset 0 1px 0 rgba(255, 255, 255, 0.35);
+    }
+    .module-heading { min-width: 0; }
+    .module-header .module-title {
+        margin: 0;
+        font-size: clamp(1.3rem, 0.55vw + 1.1rem, 1.6rem);
+        font-weight: 800;
+        line-height: 1.3;
+        letter-spacing: -0.015em;
+        color: var(--ink-900);
+    }
+    .module-header .module-desc {
+        margin: 0.18rem 0 0;
+        font-size: 0.82rem;
+        line-height: 1.55;
+        color: #4a5877;
+    }
+
+    /* 二级章节标题：比模块标题小一级，保持「模块 → 小节」的层级 */
     .section-title {
         position: relative;
         display: flex;
         align-items: center;
         gap: 0.65rem;
-        margin: 2.6rem 0 1.1rem;
-        padding: 0.9rem 1.2rem 0.9rem 1.1rem;
-        font-size: 1.5rem;
+        margin: 1.6rem 0 0.85rem;
+        padding: 0.78rem 1.05rem 0.78rem 1rem;
+        font-size: 1.3rem;
         font-weight: 700;
         letter-spacing: -0.01em;
         color: var(--ink-900);
@@ -529,32 +602,6 @@ CUSTOM_CSS = """
         to { transform: scaleX(1); }
     }
 
-    /* 筛选范围概览标签（带呼吸状态点） */
-    .overview-label {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.45rem;
-        margin: 0 0 0.8rem 0.1rem;
-        padding: 0.36rem 0.85rem;
-        border-radius: 999px;
-        border: 1px solid rgba(255, 255, 255, 0.72);
-        background: linear-gradient(150deg, rgba(255, 255, 255, 0.68), rgba(255, 255, 255, 0.4));
-        color: #38496f;
-        font-size: 0.72rem;
-        font-weight: 700;
-        letter-spacing: 0.08em;
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9),
-            0 8px 22px -18px rgba(20, 35, 80, 0.45);
-        backdrop-filter: blur(10px) saturate(150%);
-    }
-    .live-dot {
-        width: 7px;
-        height: 7px;
-        border-radius: 50%;
-        background: linear-gradient(135deg, #3fd0bd, #6ea8ff);
-        box-shadow: 0 0 10px rgba(80, 200, 220, 0.7);
-        animation: statusPulse 2.8s ease-in-out infinite;
-    }
     @keyframes statusPulse {
         0%, 100% { transform: scale(1); opacity: 0.82; box-shadow: 0 0 6px rgba(80, 200, 220, 0.45); }
         50% { transform: scale(1.35); opacity: 1; box-shadow: 0 0 14px rgba(80, 200, 220, 0.9); }
@@ -876,86 +923,160 @@ CUSTOM_CSS = """
     }
 
     /* =====================================================================
-       8.1 侧边栏章节导航（折叠面板 + 页内锚点跳转，不触发 rerun）
+       8.1 侧边栏功能导航（6 个模块按钮 + 折叠细分章节，页内锚点不触发 rerun）
        ===================================================================== */
-    /* 导航本体放在 st.expander 内：这里只负责链接列表，不再叠加第二层玻璃底 */
-    .sidebar-nav-links { display: flex; flex-direction: column; gap: 0; }
-    .nav-group { margin-top: 0.2rem; }
-    .nav-group-title {
-        padding: 0.14rem 0.36rem;
-        font-size: 0.62rem;
-        font-weight: 700;
-        letter-spacing: 0.16em;
-        color: #6b7899;
+    .nav-heading {
+        margin: 0.15rem 0 0.5rem;
+        padding-left: 0.1rem;
+        font-size: 0.82rem;
+        font-weight: 800;
+        letter-spacing: 0.02em;
+        color: #1c2a4a;
     }
-    .nav-link {
-        position: relative;
+    .sidebar-nav {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        margin: 0 0 0.9rem;
+    }
+    .nav-module-grid {
+        display: flex;
+        flex-direction: column;
+        gap: 0.34rem;
+    }
+    .nav-module {
         display: flex;
         align-items: center;
-        justify-content: space-between;
-        gap: 0.35rem;
-        margin: 0.1rem 0;
-        padding: 0.33rem 0.5rem 0.33rem 0.62rem;
-        border-radius: 10px;
-        border: 1px solid transparent;
-        color: #24314e !important;
-        font-size: 0.78rem;
-        font-weight: 600;
-        line-height: 1.32;
+        gap: 0.6rem;
+        padding: 0.5rem 0.6rem;
+        border-radius: 13px;
+        border: 1px solid rgba(255, 255, 255, 0.72);
+        background: linear-gradient(150deg, rgba(255, 255, 255, 0.78), rgba(255, 255, 255, 0.44));
+        color: #1f2d4f !important;
         text-decoration: none !important;
-        transition: background 0.18s ease, border-color 0.18s ease,
-            transform 0.18s ease, box-shadow 0.18s ease;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.92),
+            0 10px 22px -20px rgba(20, 35, 80, 0.5);
+        transition: transform 0.18s var(--ease-glide), background 0.18s ease,
+            border-color 0.18s ease, box-shadow 0.18s ease;
     }
-    /* 左侧小光条：悬停时浮现，作为当前指向的视觉提示 */
-    .nav-link::before {
-        content: "";
-        position: absolute;
-        left: 0.16rem;
-        top: 50%;
-        width: 3px;
-        height: 0.95em;
-        border-radius: 99px;
-        background: linear-gradient(180deg, #6ea8ff, #8b7cf6 55%, #3fd0bd);
-        opacity: 0;
-        transform: translateY(-50%) scaleY(0.6);
-        transition: opacity 0.18s ease, transform 0.18s ease;
+    .nav-module:hover {
+        transform: translateX(2px);
+        background: rgba(255, 255, 255, 0.94);
+        border-color: rgba(255, 255, 255, 0.98);
+        box-shadow: 0 12px 26px -18px rgba(20, 35, 80, 0.55),
+            inset 0 1px 0 rgba(255, 255, 255, 1);
     }
-    .nav-link > span:first-child {
+    .nav-module:focus-visible {
+        outline: 2px solid rgba(79, 110, 247, 0.5);
+        outline-offset: 2px;
+    }
+    .nav-module-icon {
+        flex: 0 0 auto;
+        display: grid;
+        place-items: center;
+        width: 1.85rem;
+        height: 1.85rem;
+        border-radius: 10px;
+        font-size: 0.95rem;
+        background: linear-gradient(135deg, rgba(96, 132, 255, 0.18), rgba(167, 139, 250, 0.16));
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+    }
+    .nav-module-text {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        line-height: 1.25;
+    }
+    .nav-module-text strong {
+        font-size: 0.82rem;
+        font-weight: 700;
+        color: #1a2747;
+        white-space: nowrap;
+    }
+    .nav-module-text small {
         overflow: hidden;
+        font-size: 0.68rem;
+        font-weight: 500;
+        color: #667493;
         text-overflow: ellipsis;
         white-space: nowrap;
     }
-    .nav-link:hover {
+    .nav-more {
+        padding-top: 0.28rem;
+        border-top: 1px dashed rgba(120, 140, 185, 0.28);
+    }
+    .nav-more summary {
+        padding: 0.32rem 0.4rem;
+        border-radius: 9px;
+        color: #56658a;
+        font-size: 0.7rem;
+        font-weight: 700;
+        cursor: pointer;
+        list-style: none;
+        transition: background 0.18s ease, color 0.18s ease;
+    }
+    .nav-more summary::-webkit-details-marker { display: none; }
+    .nav-more summary::marker { content: ""; }
+    .nav-more summary::before {
+        content: "▸";
+        display: inline-block;
+        margin-right: 0.34rem;
+        transition: transform 0.18s ease;
+    }
+    .nav-more[open] summary::before { transform: rotate(90deg); }
+    .nav-more summary:hover { background: rgba(255, 255, 255, 0.6); color: #2b3a5c; }
+    .nav-sub-groups {
+        display: flex;
+        flex-direction: column;
+        gap: 0.32rem;
+        padding: 0.3rem 0.05rem 0.15rem;
+    }
+    .nav-subgroup { padding-left: 0.2rem; }
+    .nav-subtitle {
+        padding: 0.12rem 0.3rem;
+        color: #7a86a5;
+        font-size: 0.6rem;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+    }
+    .nav-sublinks { display: flex; flex-direction: column; gap: 0.05rem; }
+    .nav-sublink {
+        display: block;
+        padding: 0.28rem 0.5rem;
+        border-radius: 8px;
+        border: 1px solid transparent;
+        color: #2b3a5c !important;
+        font-size: 0.74rem;
+        font-weight: 600;
+        text-decoration: none !important;
+        transition: background 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+    }
+    .nav-sublink:hover {
         background: rgba(255, 255, 255, 0.72);
-        border-color: rgba(255, 255, 255, 0.95);
+        border-color: rgba(255, 255, 255, 0.92);
         transform: translateX(2px);
-        box-shadow: 0 8px 20px -18px rgba(20, 35, 80, 0.55),
-            inset 0 1px 0 rgba(255, 255, 255, 0.95);
     }
-    .nav-link:hover::before { opacity: 1; transform: translateY(-50%) scaleY(1); }
-    .nav-link:active { transform: translateX(1px); }
-    .nav-arrow {
-        flex: 0 0 auto;
-        color: #8794b4;
-        font-size: 0.92em;
-        transition: transform 0.18s ease, color 0.18s ease;
-    }
-    .nav-link:hover .nav-arrow { color: #4d5f8c; transform: translateX(2px); }
-    .nav-link:focus-visible {
+    .nav-sublink:focus-visible {
         outline: 2px solid rgba(79, 110, 247, 0.5);
         outline-offset: 2px;
-        background: rgba(255, 255, 255, 0.66);
     }
-    .nav-top {
+    .nav-top-link {
+        display: flex;
         justify-content: center;
-        margin-top: 0.5rem;
-        padding: 0.32rem 0.5rem;
-        font-size: 0.72rem;
-        color: #3a4a70 !important;
+        padding: 0.34rem 0.5rem;
+        border-radius: 9px;
+        border: 1px solid rgba(255, 255, 255, 0.7);
         background: rgba(255, 255, 255, 0.5);
-        border-color: rgba(255, 255, 255, 0.7);
+        color: #3a4a70 !important;
+        font-size: 0.72rem;
+        font-weight: 600;
+        text-decoration: none !important;
+        transition: background 0.18s ease, border-color 0.18s ease;
     }
-    .nav-top::before { content: none; }
+    .nav-top-link:hover {
+        background: rgba(255, 255, 255, 0.82);
+        border-color: rgba(255, 255, 255, 0.98);
+    }
 
     /* =====================================================================
        9. 输入控件：半透明玻璃内胆
@@ -1503,10 +1624,18 @@ CUSTOM_CSS = """
         .hero-eyebrow { letter-spacing: 0.24em; text-indent: 0.24em; }
         .hero-orb-teal, .hero-sheen { display: none; }
         .stApp::before { animation-duration: 60s; }
+        .module-header {
+            margin-top: 1.6rem;
+            padding: 0.9rem 1rem;
+            gap: 0.75rem;
+        }
+        .module-step { width: 2.15rem; height: 2.15rem; font-size: 0.72rem; }
+        .module-header .module-title { font-size: 1.2rem; }
+        .module-header .module-desc { font-size: 0.76rem; }
         .section-title {
-            font-size: 1.26rem;
-            padding: 0.8rem 1rem 0.8rem 1.2rem;
-            margin-top: 2rem;
+            font-size: 1.16rem;
+            padding: 0.7rem 0.9rem 0.7rem 1.05rem;
+            margin-top: 1.3rem;
         }
         .metric-card {
             min-height: 104px;
@@ -1556,12 +1685,13 @@ CUSTOM_CSS = """
     [data-baseweb="tab"] { white-space: nowrap; }
 
     /* 锚点跳转的顶部留白：章节标题不会被顶部工具栏遮住。
-       锚点是标题前一个零高度 div（见 widgets.section_title），标题自身的
-       margin-top 会与它一起计入滚动位置，因此留白取一个较小的值即可。 */
-    .section-anchor {
+       锚点是标题前一个零高度 div（见 widgets.section_title / module_header），
+       标题自身的 margin-top 会与它一起计入滚动位置，因此留白取一个适中的值。 */
+    .section-anchor,
+    .module-anchor {
         height: 0;
         overflow: hidden;
-        scroll-margin-top: 4.2rem;
+        scroll-margin-top: 5rem;
     }
     .hero-glass[id] { scroll-margin-top: 2.2rem; }
     .stApp,
@@ -1615,6 +1745,7 @@ CUSTOM_CSS = """
         .metric-card,
         .insight-box,
         .section-title,
+        .module-header,
         .hero-glass,
         .hero-chip { animation: none !important; }
         .metric-card::after,

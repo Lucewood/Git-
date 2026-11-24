@@ -567,7 +567,7 @@ def _abs_error_series(backtest: pd.DataFrame) -> pd.Series:
 # 章节渲染函数（每个函数对应页面一个内容区块，按主流程顺序调用）
 # ===========================================================================
 def render_association(filtered_df: pd.DataFrame, main_color: str) -> None:
-    """第一节：核心指标关联分析。"""
+    """城市洞察：核心指标关联分析。"""
     widgets.section_title("📈 核心指标关联分析", anchor="sec-association")
 
     col_left, col_right = st.columns(2)
@@ -656,7 +656,7 @@ def render_city_comparison(
     province_map: dict[str, str],
     stats: dict[str, float],
 ) -> None:
-    """第二节：城市对比与画像。
+    """城市洞察：城市对比与画像。
 
     Args:
         stats: 主流程已算好的筛选范围汇总量（避免在此重复统计一次均值）。
@@ -1067,7 +1067,7 @@ def render_ai_advisor(
     industry_df: pd.DataFrame,
     province_map: dict[str, str],
 ) -> None:
-    """第十一节：AI 城市生活成本顾问（本地检索 + DeepSeek 文本生成）。"""
+    """决策建议：AI 城市生活成本顾问（本地检索 + DeepSeek 文本生成）。"""
     widgets.section_title("🤖 AI 城市生活成本顾问（DeepSeek）", anchor="sec-ai")
 
     creds = api_config.get_api_credentials("deepseek")
@@ -1076,14 +1076,12 @@ def render_ai_advisor(
         return
 
     widgets.insight_box(
-        "<strong>🧠 工作方式：</strong> 先在本地检索并计算城市指标、百分位、住房情景与"
-        "可替代城市，只把压缩后的事实送入 DeepSeek；模型只负责解读与建议，"
-        "不接触 248 行原始数据，也不会接触你的 API 密钥。",
+        "<strong>🧠 工作方式：</strong> 本地计算城市指标、百分位、住房情景与可替代城市，"
+        "只把压缩后的事实交给 DeepSeek；原始数据与 API 密钥都不会进入提示词。",
         tone="lilac",
     )
     st.caption(
-        "分析范围：全量城市数据（不受左侧侧边栏筛选限制）；"
-        "相同输入会复用本次会话缓存，避免重复调用产生费用。"
+        "分析范围：全量城市（不受侧边栏筛选限制）· 相同输入复用会话缓存，避免重复计费。"
     )
 
     submitted, city, profile, deep_think = _render_ai_form(
@@ -1155,8 +1153,13 @@ def render_forecast(
     main_color: str,
     province_map: dict[str, str],
 ) -> None:
-    """第三节：房价趋势分析与机器学习预测。"""
-    widgets.section_title("🤖 房价趋势分析与机器学习预测", anchor="sec-forecast")
+    """模块 04：房价趋势分析与机器学习预测。"""
+    widgets.module_header(
+        "04",
+        "📉 房价趋势预测",
+        "历史走势、机器学习递归外推与 walk-forward 外样本回测",
+        anchor="sec-forecast",
+    )
 
     with st.expander("📖 预测方法论与数据口径说明", expanded=False):
         st.markdown(
@@ -1511,7 +1514,7 @@ def _render_forecast_validation(
 def render_happiness_ranking(
     filtered_df: pd.DataFrame, main_color: str
 ) -> None:
-    """第四节：城市幸福度排名。"""
+    """城市排行：城市幸福度排名。"""
     widgets.section_title("😊 城市幸福度排名", anchor="sec-happiness")
 
     rank_col, table_col = st.columns([1.5, 1])
@@ -1553,11 +1556,11 @@ def render_happiness_ranking(
 
 
 def render_affordability(filtered_df: pd.DataFrame, main_color: str) -> None:
-    """第五节：住房可负担性指数分析。"""
+    """城市排行：住房可负担性指数分析。"""
     widgets.section_title("🏠 住房可负担性指数分析", anchor="sec-affordability")
     widgets.insight_box(
-        "<strong>💡 住房可负担性指数 = 年收入 ÷ 房价</strong><br>"
-        "指数越高，说明该城市居民用年收入能购买的住房面积越大，住房压力相对越小。",
+        "<strong>💡 可负担指数 = 年收入 ÷ 房价（元/㎡）</strong> · "
+        "数值越高，购买同样面积所需的年数越少，住房压力越小。",
         tone="mint",
     )
 
@@ -1589,40 +1592,29 @@ def render_affordability(filtered_df: pd.DataFrame, main_color: str) -> None:
         render_fig(fig)
 
 def render_top20(filtered_df: pd.DataFrame) -> None:
-    """第六节：TOP 20 住房可负担指数详表。"""
-    widgets.section_title("🏆 住房可负担指数 TOP 20 城市详情", anchor="sec-top20")
+    """城市排行：可负担指数 TOP 20 明细（表格，避免与上方排名图重复）。"""
+    widgets.section_title("🏆 可负担指数 TOP 20 明细", anchor="sec-top20")
+    st.caption(
+        "当前筛选范围内可负担指数最高的城市（最多 20 个），"
+        "按可负担指数降序排列；指数 = 年收入 ÷ 房价（元/㎡）。"
+    )
 
     top20 = analysis.top_n(filtered_df, "value_index", 20)
-
-    col_a, col_b = st.columns([1.2, 1])
-
-    with col_a:
-        st.dataframe(
-            _styled_table(
-                top20,
-                ["city", "province", "happiness", "income", "house_price",
-                 "value_index"],
-                gradient_col="可负担指数",
-                cmap="Greens",
-            ),
-            width="stretch",
-        )
-
-    with col_b:
-        sorted_top = top20.sort_values("value_index", ascending=True)
-        fig = charts.barh_ranking(
-            sorted_top, "value_index",
-            color="#f59e0b",
-            title="TOP 20 住房可负担指数",
-            xlabel=METRIC_UNITS["value_index"],
-            fmt="{:.2f}",
-            figsize=_half_column_figsize(len(sorted_top)),
-        )
-        render_fig(fig)
+    st.dataframe(
+        _styled_table(
+            top20,
+            ["city", "province", "happiness", "income", "house_price",
+             "value_index", "composite_score"],
+            gradient_col="可负担指数",
+            cmap="Greens",
+        ),
+        width="stretch",
+        height=int(min(760, max(300, len(top20) * 32 + 80))),
+    )
 
 
 def render_outliers(filtered_df: pd.DataFrame, main_color: str) -> None:
-    """第七节：异常值检测（IQR 方法）。"""
+    """城市排行：异常值检测（IQR 方法）。"""
     widgets.section_title("🔍 异常值检测（IQR 方法）", anchor="sec-outliers")
 
     outlier_happy_mask = analysis.detect_outliers(filtered_df["happiness"])
@@ -1630,9 +1622,9 @@ def render_outliers(filtered_df: pd.DataFrame, main_color: str) -> None:
     combined_mask = outlier_happy_mask | outlier_value_mask
     outlier_df = filtered_df.loc[combined_mask]
 
-    st.markdown(
-        f"基于 IQR 规则（四分位距法）在**当前 {len(filtered_df)} 个城市**中识别出 "
-        f"**{len(outlier_df)} 个异常值城市**（幸福度或可负担指数偏离总体较远）。"
+    st.caption(
+        f"在 {len(filtered_df)} 个城市中识别出 {len(outlier_df)} 个异常值城市"
+        "（幸福度或可负担指数超出 IQR 上下界）。"
     )
 
     out_col1, out_col2 = st.columns(2)
@@ -1783,7 +1775,7 @@ def render_career_guidance(
     main_color: str,
     province_map: dict[str, str],
 ) -> None:
-    """第十一节：就业指导与产业推荐（基于爬取的城市支柱产业数据库）。"""
+    """决策建议：就业指导与产业推荐（基于爬取的城市支柱产业数据库）。"""
     widgets.section_title("🧭 就业指导与产业推荐", anchor="sec-career")
 
     if industry_df is None or industry_df.empty:
@@ -2372,7 +2364,7 @@ def _render_career_skill_map(
 def render_province_aggregate(
     filtered_df: pd.DataFrame, main_color: str
 ) -> pd.DataFrame:
-    """第八节：省份维度聚合分析，返回省份聚合表供末节 Tab 复用。"""
+    """地图与数据：省份维度聚合分析，返回省份聚合表供末节 Tab 复用。"""
     widgets.section_title("🗺️ 省份维度聚合分析", anchor="sec-province")
 
     province_agg = analysis.aggregate_by_province(filtered_df)
@@ -2441,8 +2433,8 @@ def render_province_aggregate(
 
 
 def render_maps() -> None:
-    """第九节：地理可视化地图（pyecharts 生成的静态 HTML）。"""
-    widgets.section_title("🗺️ 中国城市地理分布地图", anchor="sec-maps")
+    """地图与数据：地理可视化地图（pyecharts 生成的静态 HTML）。"""
+    widgets.section_title("🌏 地理分布地图", anchor="sec-maps")
     map_col1, map_col2 = st.columns(2)
     with map_col1:
         st.markdown("### 中国各省市宜居度地图")
@@ -2460,8 +2452,8 @@ def render_data_browser(
     metadata: dict,
     industry_df: pd.DataFrame | None = None,
 ) -> None:
-    """第十节：完整数据浏览与数据质量报告。"""
-    widgets.section_title("📋 完整数据浏览", anchor="sec-data")
+    """地图与数据：完整数据浏览与数据质量报告。"""
+    widgets.section_title("📋 数据浏览与导出", anchor="sec-data")
 
     tab1, tab2, tab3 = st.tabs(["🏙️ 城市明细数据", "🗺️ 省份聚合数据", "✅ 数据质量报告"])
 
@@ -2610,57 +2602,60 @@ industry_df = data_loader.load_industry_cached(
     DATA_DIR, data_loader.data_signature(DATA_DIR, data_loader.OPTIONAL_FILES)
 )
 
-# ---------------- 侧边栏：分析控制面板 ----------------
+# ---------------- 侧边栏：功能导航 + 筛选控制 ----------------
 with st.sidebar:
     st.markdown("## 🏙️ 分析控制面板")
-    st.caption(f"数据参考年份 {DATA_REF_YEAR} · 版本 v{APP_VERSION}")
 
     # 导航占位符：导航项依赖下方的「显示地理地图」开关，因此先占位、
     # 待开关求值后再回填，既能显示在侧边栏顶部，又能随开关联动。
     nav_slot = st.empty()
 
-    selected_provinces = st.multiselect(
-        "选择省份（可多选，留空=全部）",
-        options=sorted(df["province"].unique()),
-        default=[],
-        placeholder="全部省份",
-        key="province_filter",
-    )
+    with st.expander("🔎 筛选条件", expanded=True):
+        st.caption("省份、关键词与数值范围会联动刷新全部模块。")
+        selected_provinces = st.multiselect(
+            "选择省份（留空=全部）",
+            options=sorted(df["province"].unique()),
+            default=[],
+            placeholder="全部省份",
+            key="province_filter",
+        )
 
-    city_keyword = st.text_input(
-        "🔎 城市关键词过滤（可留空）",
-        value="",
-        placeholder="例如：杭州、成都",
-        key="city_keyword_filter",
-    )
+        city_keyword = st.text_input(
+            "🔎 城市关键词",
+            value="",
+            placeholder="例如：杭州、成都",
+            key="city_keyword_filter",
+        )
 
-    st.markdown("---")
-    st.markdown("### 📊 数值筛选")
-    happiness_range = widgets.range_slider(
-        "幸福度范围", df["happiness"], 0.5, key="r_happy"
-    )
-    income_range = widgets.range_slider(
-        "年收入范围（元）", df["income"], 1000, key="r_income", to_int=True
-    )
-    house_range = widgets.range_slider(
-        "房价范围（元/㎡）", df["house_price"], 500, key="r_house", to_int=True
-    )
-    population_range = widgets.range_slider(
-        "常住人口范围（万人）", df["population"], 10, key="r_pop", to_int=True
-    )
+        st.markdown("##### 📊 数值范围")
+        happiness_range = widgets.range_slider(
+            "幸福度范围", df["happiness"], 0.5, key="r_happy"
+        )
+        income_range = widgets.range_slider(
+            "年收入范围（元）", df["income"], 1000, key="r_income", to_int=True
+        )
+        house_range = widgets.range_slider(
+            "房价范围（元/㎡）", df["house_price"], 500, key="r_house", to_int=True
+        )
+        population_range = widgets.range_slider(
+            "常住人口范围（万人）", df["population"], 10, key="r_pop", to_int=True
+        )
 
-    st.markdown("---")
-    st.markdown("### 🎨 可视化设置")
-    chart_theme = st.selectbox(
-        "图表配色主题", options=list(COLOR_MAPS.keys()), key="theme"
-    )
-    main_color = COLOR_MAPS[chart_theme]
+    with st.expander("🎨 显示设置", expanded=False):
+        chart_theme = st.selectbox(
+            "图表配色主题", options=list(COLOR_MAPS.keys()), key="theme"
+        )
+        main_color = COLOR_MAPS[chart_theme]
 
-    show_maps = st.toggle("显示地理地图（HTML 组件）", value=True, key="toggle_maps")
+        show_maps = st.toggle(
+            "显示地理地图（HTML 组件）", value=True, key="toggle_maps"
+        )
 
-    # 回填章节导航（原生折叠面板 + 页内锚点跳转，不触发 rerun）
+    # 回填功能导航（6 个模块按钮 + 折叠细分章节；页内锚点跳转不触发 rerun）
     with nav_slot.container():
         widgets.sidebar_nav(show_maps=show_maps)
+
+    st.caption("导航使用页内锚点，切换模块不会重置筛选条件或重新训练模型。")
 
 # ---------------- 数据筛选 ----------------
 mask = pd.Series(True, index=df.index)
@@ -2692,66 +2687,90 @@ st.markdown(
     f'<span class="hero-orb hero-orb-violet"></span>'
     f'<span class="hero-sheen"></span>'
     f"</div>"
-    f'<div class="hero-eyebrow">City Living Index · {DATA_REF_YEAR}</div>'
+    f'<div class="hero-eyebrow">01 · City Living Index · {DATA_REF_YEAR}</div>'
     f'<h1 class="main-header"><span class="hero-emoji">🏙️</span> {APP_NAME}</h1>'
-    f'<p class="hero-sub">基于全国 {len(df)} 个城市（当前筛选 {len(filtered_df)} 个）的收入、'
-    f"房价、人口与幸福度数据，深度探索城市宜居价值</p>"
+    f'<p class="hero-sub">收入、房价、人口与幸福度数据全景对比 · '
+    f"当前筛选 {len(filtered_df)} 个城市</p>"
     f'<div class="hero-chips">'
     f'<span class="hero-chip">🏙️ {len(df)} 个城市</span>'
     f'<span class="hero-chip">🗺️ {df["province"].nunique()} 个省级行政区</span>'
     f'<span class="hero-chip">📊 {len(METRIC_COLS)} 项核心指标</span>'
-    f'<span class="hero-chip">🗓️ {DATA_REF_YEAR} 数据参考年</span>'
     f"</div>"
     f"</div>",
     unsafe_allow_html=True,
 )
 
-st.markdown(
-    f'<div class="overview-label"><span class="live-dot"></span>'
-    f"筛选范围实时概览 · {len(filtered_df)} 个城市</div>",
-    unsafe_allow_html=True,
-)
-
 stats = _means(filtered_df)
 if stats["population_sum"] > 0:
-    total_pop_text = f"总人口约 {stats['population_sum'] / 10000:.1f} 亿"
+    total_pop_text = f"总人口 {stats['population_sum'] / 10000:.1f} 亿"
 else:
-    total_pop_text = "总人口数据不可用"
+    total_pop_text = "人口数据缺失"
 
 c1, c2, c3, c4, c5 = st.columns(5)
 with c1:
-    widgets.metric_card("📋 城市总数", f"{len(filtered_df)}",
-                        sub=f"{filtered_df['province'].nunique()} 个省份", tone="sky")
+    widgets.metric_card(
+        "📋 城市总数", f"{len(filtered_df)}",
+        sub=f"{filtered_df['province'].nunique()} 个省份 · {total_pop_text}",
+        tone="sky",
+    )
 with c2:
     widgets.metric_card("😊 平均幸福度", f"{stats['happiness']:.1f}",
                         sub="满分 100", tone="rose")
 with c3:
     widgets.metric_card("💰 平均年收入", f"¥{stats['income'] / 10000:.1f}万",
-                        sub="单位：元/年", tone="amber")
+                        sub="筛选范围均值", tone="amber")
 with c4:
     widgets.metric_card("🏠 平均房价", f"¥{stats['house_price']:.0f}",
-                        sub="单位：元/㎡", tone="peach")
+                        sub="筛选范围均值（元/㎡）", tone="peach")
 with c5:
     widgets.metric_card("📈 可负担指数", f"{stats['value_index']:.2f}",
-                        sub=total_pop_text, tone="mint")
+                        sub="年收入 ÷ 房价", tone="mint")
 
-# ---------------- 章节渲染（顺序即页面展示顺序） ----------------
+# ---------------- 模块渲染（顺序即页面展示顺序） ----------------
 province_map = df.set_index("city")["province"].to_dict()
 
+# 模块 02：城市洞察
+widgets.module_header(
+    "02", "📈 城市洞察",
+    "指标之间的关联关系，以及多城市对比与单城市画像",
+    anchor="sec-insight",
+)
 render_association(filtered_df, main_color)
 render_city_comparison(filtered_df, main_color, province_map, stats)
-render_ai_advisor(df, industry_df, province_map)
-render_forecast(df, main_color, province_map)
+
+# 模块 03：城市排行
+widgets.module_header(
+    "03", "🏆 城市排行",
+    "幸福度、住房可负担性、TOP 20 明细与异常值一览",
+    anchor="sec-ranking",
+)
 render_happiness_ranking(filtered_df, main_color)
 render_affordability(filtered_df, main_color)
 render_top20(filtered_df)
 render_outliers(filtered_df, main_color)
+
+# 模块 04：房价预测（模块标题由 render_forecast 内部渲染）
+render_forecast(df, main_color, province_map)
+
+# 模块 05：决策建议
+widgets.module_header(
+    "05", "🧭 决策建议",
+    "结合生活成本与产业数据，给出可解释的 AI 解读与就业推荐",
+    anchor="sec-advice",
+)
+render_ai_advisor(df, industry_df, province_map)
 render_career_guidance(filtered_df, industry_df, main_color, province_map)
+
+# 模块 06：地图与数据
+widgets.module_header(
+    "06", "🗺️ 地图与数据",
+    "省份聚合、地理分布地图与完整数据导出",
+    anchor="sec-geo",
+)
 province_agg = render_province_aggregate(filtered_df, main_color)
 if show_maps:
     render_maps()
 
-# ---------------- 完整数据浏览与数据质量报告 ----------------
 metadata = data_loader.load_metadata(DATA_DIR)
 render_data_browser(filtered_df, province_agg, quality, metadata, industry_df)
 

@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -18,36 +20,66 @@ GLASS_TONES: frozenset[str] = frozenset(
     {"blue", "mint", "peach", "lilac", "rose", "sky", "amber"}
 )
 
-# 侧边栏章节导航配置：分组标题 → ((锚点 ID, 显示文本), ...)。
-# 锚点必须与页面 section_title(anchor=...) / 章节容器的 id 一一对应，
-# 由 tests/test_streamlit_app.py 断言「导航目标全部存在」，避免改名后失效。
-SIDEBAR_NAV_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
-    ("总览", (("sec-overview", "📊 概览仪表盘"),)),
-    (
-        "分析视图",
+
+@dataclass(frozen=True)
+class NavModule:
+    """侧边栏一级导航模块（按钮 + 可选的细分章节）。
+
+    Attributes:
+        anchor: 模块锚点 ID，必须与页面 module_header() / 章节容器的 id 一致。
+        icon: 导航按钮图标（emoji）。
+        title: 模块名称（尽量短，保证侧边栏一行可读）。
+        desc: 一句话说明，帮助用户判断该模块是否是自己要找的内容。
+        subs: 细分章节 ((锚点 ID, 显示文本), ...)，收起在「细分章节」中。
+    """
+
+    anchor: str
+    icon: str
+    title: str
+    desc: str
+    subs: tuple[tuple[str, str], ...] = ()
+
+
+# 侧边栏功能导航：6 个一级模块覆盖全部页面内容。
+# 锚点必须与页面 module_header(anchor=...) / section_title(anchor=...) 的 id
+# 一一对应，由 tests/test_streamlit_app.py 断言「导航目标全部存在」。
+# 设计原则：一级入口只保留 6 个、文案直白；细分章节折叠，避免侧边栏过长。
+SIDEBAR_NAV_MODULES: tuple[NavModule, ...] = (
+    NavModule(
+        "sec-overview", "📊", "概览", "筛选范围与核心指标",
+    ),
+    NavModule(
+        "sec-insight", "📈", "城市洞察", "指标关联与城市画像",
         (
-            ("sec-association", "📈 核心指标关联"),
+            ("sec-association", "📈 核心指标关联分析"),
             ("sec-city", "🔬 城市对比与画像"),
+        ),
+    ),
+    NavModule(
+        "sec-ranking", "🏆", "城市排行", "幸福度、可负担性与异常值",
+        (
             ("sec-happiness", "😊 幸福度排名"),
             ("sec-affordability", "🏠 住房可负担性"),
-            ("sec-top20", "🏆 TOP 20 详情"),
+            ("sec-top20", "🏆 TOP 20 明细"),
             ("sec-outliers", "🔍 异常值检测"),
         ),
     ),
-    (
-        "智能洞察",
+    NavModule(
+        "sec-forecast", "📉", "房价预测", "趋势外推与回测验证",
+    ),
+    NavModule(
+        "sec-advice", "🧭", "决策建议", "AI 成本顾问与就业规划",
         (
             ("sec-ai", "🤖 AI 生活成本顾问"),
-            ("sec-forecast", "📉 房价趋势预测"),
             ("sec-career", "🧭 就业指导与产业"),
         ),
     ),
-    (
-        "地理与数据",
+    NavModule(
+        "sec-geo", "🗺️", "地图与数据", "省份聚合、地图与数据下载",
         (
             ("sec-province", "🗺️ 省份聚合分析"),
             ("sec-maps", "🌏 地理分布地图"),
-            ("sec-data", "📋 数据浏览与质量"),
+            ("sec-data", "📋 数据浏览与导出"),
         ),
     ),
 )
@@ -76,10 +108,10 @@ def metric_card(
 
 
 def section_title(text: str, anchor: str | None = None) -> None:
-    """渲染章节标题。
+    """渲染章节标题（模块内的二级标题）。
 
     Args:
-        anchor: 可选锚点 ID（与 ``SIDEBAR_NAV_GROUPS`` 中的链接一一对应）。
+        anchor: 可选锚点 ID（与 ``SIDEBAR_NAV_MODULES`` 中的细分章节对应）。
 
     说明：锚点必须是**独立的空 div**，不能直接写在 ``<h2>`` 上——Streamlit 渲染
     markdown 标题时会把标题的 id 重写成自动生成的哈希（实测 1.58），导致
@@ -97,62 +129,97 @@ def section_title(text: str, anchor: str | None = None) -> None:
     )
 
 
-def sidebar_nav_html(*, show_maps: bool = True) -> str:
-    """构造侧边栏章节导航的链接 HTML（标题与折叠由 st.expander 提供）。
+def module_header(step: str, title: str, desc: str, anchor: str) -> None:
+    """渲染一级功能模块标题（编号 + 标题 + 一句话说明）。
 
     Args:
-        show_maps: 是否展示「地理分布地图」章节；关闭地图时一并隐藏该导航项，
+        step: 两位模块序号（如 ``"02"``），帮助用户建立页面顺序感。
+        title: 模块标题（含 emoji）。
+        desc: 一句话说明该模块能回答什么问题。
+        anchor: 模块锚点 ID，与 ``SIDEBAR_NAV_MODULES`` 的一级入口对应。
+
+    说明：锚点同样使用独立空 div（原因见 ``section_title``），保证侧边栏
+    模块按钮点击后能准确定位，且标题不会被顶部工具栏遮住。
+    """
+    st.markdown(
+        f'<div id="{anchor}" class="module-anchor" aria-hidden="true"></div>'
+        f'<div class="module-header">'
+        f'<span class="module-step" aria-hidden="true">{step}</span>'
+        f'<div class="module-heading">'
+        f'<h2 class="module-title">{title}</h2>'
+        f'<p class="module-desc">{desc}</p>'
+        f"</div></div>",
+        unsafe_allow_html=True,
+    )
+
+
+def sidebar_nav_html(*, show_maps: bool = True) -> str:
+    """构造侧边栏功能导航 HTML（6 个模块按钮 + 折叠的细分章节）。
+
+    Args:
+        show_maps: 是否展示「地理分布地图」章节；关闭地图时一并隐藏该细分子项，
             避免跳到不存在的章节。
 
     说明：链接使用页内锚点（``href="#sec-xxx"``），由浏览器原生滚动完成定位，
     不触发 Streamlit rerun，因此不会重置筛选条件或重新训练模型。
     """
-    groups: list[str] = []
-    for group_title, items in SIDEBAR_NAV_GROUPS:
+    module_links: list[str] = []
+    sub_groups: list[str] = []
+    sub_count = 0
+    for module in SIDEBAR_NAV_MODULES:
+        module_links.append(
+            f'<a class="nav-module" href="#{module.anchor}" '
+            f'title="{module.title}：{module.desc}">'
+            f'<span class="nav-module-icon" aria-hidden="true">{module.icon}</span>'
+            f'<span class="nav-module-text">'
+            f"<strong>{module.title}</strong><small>{module.desc}</small>"
+            f"</span></a>"
+        )
         visible = [
             (anchor, label)
-            for anchor, label in items
+            for anchor, label in module.subs
             if show_maps or anchor != "sec-maps"
         ]
         if not visible:
             continue
+        sub_count += len(visible)
         links = "".join(
-            f'<a class="nav-link" href="#{anchor}" title="{label}">'
-            f"<span>{label}</span><span class=\"nav-arrow\" aria-hidden=\"true\">›</span></a>"
+            f'<a class="nav-sublink" href="#{anchor}">{label}</a>'
             for anchor, label in visible
         )
-        groups.append(
-            f'<div class="nav-group"><div class="nav-group-title">{group_title}</div>'
-            f"{links}</div>"
+        sub_groups.append(
+            f'<div class="nav-subgroup">'
+            f'<div class="nav-subtitle">{module.title}</div>'
+            f'<div class="nav-sublinks">{links}</div></div>'
         )
 
     return (
-        '<div class="sidebar-nav-links">'
-        + "".join(groups)
-        + '<a class="nav-link nav-top" href="#sec-overview">↑ 回到顶部</a>'
+        '<div class="sidebar-nav">'
+        f'<div class="nav-module-grid">{"".join(module_links)}</div>'
+        f'<details class="nav-more">'
+        f"<summary>🔍 细分章节（{sub_count}）</summary>"
+        f'<div class="nav-sub-groups">{"".join(sub_groups)}</div>'
+        f"</details>"
+        '<a class="nav-top-link" href="#sec-overview">↑ 回到顶部</a>'
         "</div>"
     )
 
 
 def sidebar_nav_count(*, show_maps: bool = True) -> int:
-    """导航包含的章节数（用于折叠面板标题，地图关闭时自动减一）。"""
-    return sum(
-        1
-        for _group, items in SIDEBAR_NAV_GROUPS
-        for anchor, _label in items
-        if show_maps or anchor != "sec-maps"
-    )
+    """一级导航模块数量（地图开关只影响细分章节，不改变模块数）。"""
+    return len(SIDEBAR_NAV_MODULES)
 
 
-def sidebar_nav(*, show_maps: bool = True, expanded: bool = True) -> None:
-    """在当前容器（通常是 st.sidebar）中渲染章节导航。
+def sidebar_nav(*, show_maps: bool = True) -> None:
+    """在当前容器（通常是 st.sidebar）中渲染功能导航。
 
-    外层用 st.expander 提供原生折叠：默认展开便于跳转，收起后把纵向空间
-    让给下方的筛选控件（侧边栏导航与筛选共用一列，避免互相挤压）。
+    导航常驻侧边栏顶部：6 个模块按钮直接可见，细分章节默认折叠，
+    既不挤占筛选控件的空间，也避免用户在一长串小链接里寻找功能。
     """
-    count = sidebar_nav_count(show_maps=show_maps)
-    with st.expander(f"🧭 快速导航（{count} 个章节）", expanded=expanded):
-        st.markdown(sidebar_nav_html(show_maps=show_maps), unsafe_allow_html=True)
+    st.markdown(
+        '<div class="nav-heading">🧭 功能导航</div>', unsafe_allow_html=True
+    )
+    st.markdown(sidebar_nav_html(show_maps=show_maps), unsafe_allow_html=True)
 
 
 # 光标跟随高光：把指针位置写成 CSS 变量（--glass-x / --glass-y），
@@ -171,8 +238,8 @@ _POINTER_GLOW_SCRIPT = """
     if (host.matchMedia && !host.matchMedia('(hover: hover)').matches) { return; }
     var doc = host.document;
     var selector = [
-      '.metric-card', '.insight-box', '.section-title', '.hero-glass',
-      '[data-testid="stExpander"]', '[data-testid="stImageContainer"]',
+      '.metric-card', '.insight-box', '.section-title', '.module-header',
+      '.hero-glass', '[data-testid="stExpander"]', '[data-testid="stImageContainer"]',
       '[data-testid="stIFrame"]', '.footer'
     ].join(',');
     var frame = 0;
