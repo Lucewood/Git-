@@ -38,6 +38,10 @@
 所有装饰性动画都遵循系统的「减少动态效果」设置（`prefers-reduced-motion`），
 此时背景退回首屏静态配色；触屏设备与不支持动效的浏览器同样会自动降级为静态玻璃质感。
 
+> Streamlit Community Cloud 会把应用放进同源 iframe。前端增强脚本会优先定位
+> 包含 `.stApp` 的文档（本地主文档 / Cloud 的应用 iframe 都直接生效），
+> 只有 `components.html` 兜底时才回退到同源父文档，因此本地与云端表现一致。
+
 ---
 
 ## 📁 项目结构
@@ -286,6 +290,28 @@ python scripts/generate_maps.py         # 重新生成 HTML 地图
 docker build -t city-insight .
 docker run -p 8501:8501 city-insight
 ```
+
+---
+
+## 🪟 Streamlit Cloud 上前端增强失效（应用在同源 iframe 中）
+
+**现象**：本地运行时滚动分幕背景、光标跟随高光都正常；部署到 Streamlit Community
+Cloud 后两者都看不到，而服务端日志没有任何报错。
+
+**原因**：Community Cloud 会把应用放进一个同源 iframe（`sandbox` 含
+`allow-same-origin allow-scripts`）。`st.html` 的脚本运行在**应用自己的文档**里，
+但 `window.parent` 是 Cloud 外壳，里面没有 `.stApp`。早期脚本固定把
+`window.parent.document` 当作宿主，找不到 `.stApp` 后静默退出，因此前端增强
+在云端全部失效。
+
+**修复**：`scenes.py` 与 `widgets.py` 的脚本现在优先选择**包含 `.stApp` 的当前
+文档**（本地主文档 / Cloud 的应用 iframe 都直接生效）；只有 `components.html`
+兜底、脚本位于应用内的子 iframe 时，才回退到同源父文档。
+`tests/test_scenes.py` 中的 `test_injected_scripts_resolve_the_app_document`
+会锁定这一行为。
+
+**部署后**：推送提交并在 Community Cloud 完成重新部署后，执行
+`Manage app → Clear cache / Reboot`，浏览器再强制刷新一次即可看到效果。
 
 ---
 

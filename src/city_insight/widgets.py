@@ -224,20 +224,40 @@ def sidebar_nav(*, show_maps: bool = True) -> None:
 
 
 # 光标跟随高光：把指针位置写成 CSS 变量（--glass-x / --glass-y），
-# 由 styles.CUSTOM_CSS 中的玻璃背景层消费。脚本优先通过 st.html 内联注入主页
-# （旧版 Streamlit 退回同源 iframe 的 components.html）；任何跨域 / 沙箱限制
-# 都会被 try/catch 吞掉，退化为「固定在顶部的静态高光」，页面功能不受影响。
+# 由 styles.CUSTOM_CSS 中的玻璃背景层消费。脚本优先定位包含 .stApp 的文档：
+# 本地主文档 / Streamlit Cloud 的应用 iframe 都直接使用当前 document，
+# 仅 components.html 兜底（脚本位于应用内子 iframe）才回退到同源父文档。
+# 任何跨域 / 沙箱限制都会被 try/catch 吞掉，退化为「固定在顶部的静态高光」。
 _POINTER_GLOW_SCRIPT = """
 <script>
 (function () {
   try {
-    var host = window.parent;
-    if (!host || host.__liquidGlassPointer) { return; }
+    var host = window;
+    var doc = document;
+    var app = doc.querySelector('.stApp');
+    var parentDoc = null;
+    if (!app) {
+      try {
+        if (window.parent && window.parent !== window) {
+          parentDoc = window.parent.document;
+        }
+      } catch (error) {
+        parentDoc = null;
+      }
+    }
+    if (!app && parentDoc) {
+      var parentApp = parentDoc.querySelector('.stApp');
+      if (parentApp) {
+        host = window.parent;
+        doc = parentDoc;
+        app = parentApp;
+      }
+    }
+    if (!app || host.__liquidGlassPointer) { return; }
     if (host.matchMedia && host.matchMedia('(prefers-reduced-motion: reduce)').matches) {
       return;
     }
     if (host.matchMedia && !host.matchMedia('(hover: hover)').matches) { return; }
-    var doc = host.document;
     var selector = [
       '.metric-card', '.insight-box', '.section-title', '.module-header',
       '.hero-glass', '[data-testid="stExpander"]', '[data-testid="stImageContainer"]',
@@ -292,8 +312,10 @@ def _inject_main_page_script(script: str) -> None:
 
     ``st.html(..., unsafe_allow_javascript=True)`` 不会把内容放进 iframe，
     因此不会在页面顶部留下额外的组件占位；Streamlit 版本较旧不支持该参数时，
-    退回 ``components.html``（脚本内部已用 ``window.parent`` 兼容两种环境）。
-    跨域 / 沙箱 / 注入失败都只失去对应的增强效果，不影响页面功能。
+    退回 ``components.html``。脚本内部会优先定位包含 ``.stApp`` 的文档：
+    本地主文档 / Streamlit Cloud 的应用 iframe 都直接生效，只有组件 iframe
+    才回退到同源父文档，因此两种注入路径行为一致。跨域 / 沙箱 / 注入失败都
+    只失去对应的增强效果，不影响页面功能。
     """
     try:
         st.html(script, unsafe_allow_javascript=True)

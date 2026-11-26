@@ -195,5 +195,27 @@ def test_scene_script_embeds_palettes_and_safeguards() -> None:
         "ResizeObserver",
         "--scene-base",
         "requestAnimationFrame",
+        "var doc = document;",
+        "parentDoc",
     ):
         assert token in script
+
+
+def test_injected_scripts_resolve_the_app_document() -> None:
+    """前端增强必须优先定位含 .stApp 的文档（Cloud 的应用在同源 iframe 内）。
+
+    回归背景：脚本曾固定使用 ``window.parent``。Streamlit Community Cloud
+    把应用放在同源 iframe 中，父文档是 Cloud 外壳、没有 ``.stApp``，
+    导致背景换色与光标高光在云端全部失效、本地却正常。
+    """
+    from city_insight import widgets
+
+    for script in (scenes.scene_script(), widgets._POINTER_GLOW_SCRIPT):
+        assert "var doc = document;" in script
+        assert "parentDoc" in script
+        assert "parentDoc.querySelector('.stApp')" in script
+        assert "window.parent" in script
+        # 当前文档已有 .stApp 时不应再访问父文档（避免跨域 / 沙箱风险）
+        assert "if (!app) {" in script
+        # 不能把父文档作为首选宿主
+        assert "var host = window.parent;" not in script

@@ -173,16 +173,37 @@ def scene_root_css() -> str:
     )
 
 
-# 说明：脚本运行在 Streamlit 主文档（st.html 不放进 iframe），因此直接操作
-# .stApp 的 CSS 变量即可；同时保留 window.parent 兜底，兼容旧版退回 iframe 的
-# components.html 注入方式。脚本只读页面已有锚点、写入 5 个 CSS 变量，
-# 不触碰业务数据或 DOM 结构，失败时静默退回首屏静态配色。
+# 说明：st.html 的脚本运行在「应用自己的 document」里；Streamlit Community
+# Cloud 会把整个应用放进同源 iframe，因此 window.parent 反而是没有 .stApp 的
+# Cloud 外壳。脚本优先使用包含 .stApp 的当前文档，仅在 components.html 兜底
+# （脚本位于应用内的子 iframe）时才回退到同源父文档。脚本只读页面已有锚点、
+# 写入 5 个 CSS 变量，不触碰业务数据或 DOM 结构，失败时静默退回首屏静态配色。
 _SCENE_SCRIPT = r"""
 <script>
 (function () {
   try {
-    var host = window.parent;
-    if (!host) { return; }
+    var host = window;
+    var doc = document;
+    var app = doc.querySelector('.stApp');
+    var parentDoc = null;
+    if (!app) {
+      try {
+        if (window.parent && window.parent !== window) {
+          parentDoc = window.parent.document;
+        }
+      } catch (error) {
+        parentDoc = null;
+      }
+    }
+    if (!app && parentDoc) {
+      var parentApp = parentDoc.querySelector('.stApp');
+      if (parentApp) {
+        host = window.parent;
+        doc = parentDoc;
+        app = parentApp;
+      }
+    }
+    if (!app) { return; }
     if (host.matchMedia &&
         host.matchMedia('(prefers-reduced-motion: reduce)').matches) {
       return;
@@ -193,9 +214,6 @@ _SCENE_SCRIPT = r"""
       if (host.__citySceneApply) { host.__citySceneApply(); }
       return;
     }
-    var doc = host.document;
-    var app = doc.querySelector('.stApp');
-    if (!app) { return; }
 
     var scenes = __SCENE_PAYLOAD__;
     var frame = 0;
