@@ -49,23 +49,25 @@
 ```
 ├── src/
 │   ├── streamlit_app.py          # Streamlit 入口（仅编排页面）
-│   └── city_insight/             # 业务包（可测试、可复用）
-│       ├── config.py             # 路径 / 常量 / 数据集列定义 / 环境变量配置
-│       ├── logging_setup.py      # 统一日志（控制台 + 滚动文件）
-│       ├── fonts.py              # 中文字体注册与解析（内置字体优先，防「方框」缺字）
-│       ├── data_loader.py        # CSV 加载 / 合并 / 派生指标 / 质量校验
-│       ├── analysis.py           # 纯函数分析逻辑（相关、异常值、聚合）
-│       ├── career.py             # 就业指导推荐引擎（五维加权打分与建议生成）
-│       ├── crawler.py            # 通用爬虫框架（robots / 限速 / 重试 / 缓存 / 解析）
-│       ├── industry_kb.py        # 行业知识库（16 个行业大类的技能与岗位口径）
-│       ├── industry_seed.py      # 支柱产业数据源种子（确定性可复现）
-│       ├── forecast.py           # 房价历史 + 特征工程 + 机器学习预测
-│       ├── api_config.py         # Streamlit secrets / 环境变量 → API 凭证（脱敏）
-│       ├── ai_advisor.py         # 本地城市检索 + DeepSeek 提示词与 Chat 客户端
-│       ├── charts.py             # Matplotlib / Seaborn 图表工厂
-│       ├── widgets.py            # Streamlit UI 组件封装
-│       ├── scenes.py             # 滚动分幕背景配色与换色脚本
-│       └── styles.py             # 页面 CSS
+│   ├── city_insight/             # 业务包（可测试、可复用）
+│   │   ├── config.py             # 路径 / 常量 / 数据集列定义 / 环境变量配置
+│   │   ├── logging_setup.py      # 统一日志（控制台 + 滚动文件）
+│   │   ├── fonts.py              # 中文字体注册与解析（内置字体优先，防「方框」缺字）
+│   │   ├── data_loader.py        # CSV 加载 / 合并 / 派生指标 / 质量校验
+│   │   ├── analysis.py           # 纯函数分析逻辑（相关、异常值、聚合）
+│   │   ├── career.py             # 就业指导推荐引擎（五维加权打分与建议生成）
+│   │   ├── crawler.py            # 通用爬虫框架（robots / 限速 / 重试 / 缓存 / 解析）
+│   │   ├── industry_kb.py        # 行业知识库（16 个行业大类的技能与岗位口径）
+│   │   ├── industry_seed.py      # 支柱产业数据源种子（确定性可复现）
+│   │   ├── forecast.py           # 房价历史 + 特征工程 + 机器学习预测
+│   │   ├── api_config.py         # Streamlit secrets / 环境变量 → API 凭证（脱敏）
+│   │   ├── ai_advisor.py         # 本地城市检索 + DeepSeek 提示词与 Chat 客户端
+│   │   ├── charts.py             # Matplotlib / Seaborn 图表工厂
+│   │   ├── widgets.py            # Streamlit UI 组件封装
+│   │   ├── scenes.py             # 滚动分幕背景配色与换色脚本
+│   │   ├── map_assets.py         # pyecharts 地图脚本本地化（去外部 CDN）
+│   │   └── styles.py             # 页面 CSS
+│   └── static/pyecharts/         # ECharts / china.js 地图静态资源（随应用部署）
 ├── assets/fonts/                 # 内置中文字体（Noto Sans SC + OFL 许可证）
 ├── data/                         # 数据文件 + metadata.json 数据字典
 │   ├── industry.csv              # 支柱产业与人才需求（爬虫产出）
@@ -188,6 +190,7 @@ pytest -v
 - `tests/test_data_loader.py`：数据加载 / 合并 / 派生指标 / 质量校验 / 支柱产业字段补位与健康检查
 - `tests/test_analysis.py`：相关、异常值、聚合等纯函数逻辑
 - `tests/test_scenes.py`：滚动分幕配色顺序 / 相邻色差 / 正文对比度 / CSS 变量与脚本接线
+- `tests/test_map_assets.py`：地图 ECharts 静态资源完整性 / CDN → `/app/static` 改写
 - `tests/test_forecast.py`：房价历史加载、特征工程、模型训练与递归预测
 - `tests/test_charts.py`：图表工厂返回合法 Figure
 - `tests/test_crawler.py`：爬虫抓取策略、双解析器回退、页面解析与清洗
@@ -312,6 +315,37 @@ Cloud 后两者都看不到，而服务端日志没有任何报错。
 
 **部署后**：推送提交并在 Community Cloud 完成重新部署后，执行
 `Manage app → Clear cache / Reboot`，浏览器再强制刷新一次即可看到效果。
+
+---
+
+## 🗺️ 地图空白（pyecharts 外部 CDN 证书 / 网络问题）
+
+**现象**：地图区域全白；Cloud 与本地表现可能不一致（某次本地因浏览器缓存
+仍能显示，Cloud 新会话则空白）。浏览器控制台可见：
+
+```text
+Failed to load resource: net::ERR_CERT_DATE_INVALID
+Uncaught ReferenceError: echarts is not defined
+```
+
+**原因**：`notebooks/*.html` 由 pyecharts 生成，默认从
+`https://assets.pyecharts.org/assets/...` 加载 `echarts.min.js` 与
+`china.js`。2026-11 该域名证书已过期，外部 CDN 不再可靠；任一脚本失败都会
+让整张地图无法初始化。
+
+**修复**：
+
+1. 把 `echarts.min.js` 与 `china.js` 放入 `src/static/pyecharts/v6/`
+   （来源、SHA-256 与许可证见该目录 README）；
+2. `.streamlit/config.toml` 启用 `server.enableStaticServing = true`；
+3. `city_insight/map_assets.py` 在读取地图 HTML 时把 CDN 前缀改写为
+   **相对路径** `app/static/pyecharts/`：本地解析为 `/app/static/...`，
+   Streamlit Cloud 自动解析为 `/~/+/app/static/...`（根路径 `/app/static`
+   在 Cloud 会落到外壳 HTML），由 Streamlit 同源提供，不再请求外部 CDN；
+4. `tests/test_map_assets.py` 校验资源完整性、URL 改写与静态服务配置。
+
+**部署后**：重新构建 Cloud 应用并 `Clear cache / Reboot`。可在浏览器
+Network 面板确认地图脚本来自 `.../app/static/pyecharts/v6/...` 且返回 200。
 
 ---
 

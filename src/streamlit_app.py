@@ -31,6 +31,7 @@ from city_insight import (
     charts,
     data_loader,
     forecast,
+    map_assets,
     widgets,
 )
 from city_insight.config import (
@@ -69,6 +70,22 @@ widgets.pointer_glow()
 # 滚动分幕背景：按功能模块平滑换色（无脚本 / 减少动态效果时保留静态首屏配色）
 widgets.scroll_scene_gradient()
 charts.setup_plot_style()
+
+# 地图脚本本地化：优先使用 src/static/pyecharts/ 下的 ECharts 资源，
+# 避免外部 CDN 证书过期 / 网络策略导致 Cloud 与本地地图空白。
+try:
+    _static_serving_enabled = bool(st.get_option("server.enableStaticServing"))
+except Exception:  # noqa: BLE001 - 旧版 / 测试环境取不到配置时按关闭处理
+    _static_serving_enabled = False
+MAP_STATIC_ENABLED = _static_serving_enabled and map_assets.map_assets_available()
+if MAP_STATIC_ENABLED:
+    logger.info("地图脚本使用本地静态资源：app/static/pyecharts/")
+else:
+    logger.warning(
+        "地图脚本将使用外部 CDN（可能因证书 / 网络不可用导致地图空白）；"
+        "请在 .streamlit/config.toml 启用 server.enableStaticServing=true，"
+        "并确认 src/static/pyecharts/ 资源存在。"
+    )
 
 # 记录 Web 运行环境版本：排查静态 / 媒体文件（图表 PNG）下发问题时非常关键。
 # 回归背景：starlette >= 1.4 与 Streamlit 1.58 的 GZip 中间件不兼容，
@@ -318,7 +335,9 @@ def load_map_html(
         logger.warning("地图文件读取失败（%s）：%s", path, exc)
         return None
     # 替换固定宽度为 100% 以自适应容器
-    return raw.replace("width:900px;", "width:100%;")
+    html = raw.replace("width:900px;", "width:100%;")
+    # 将 pyecharts CDN 脚本改为应用自带静态资源，避免 Cloud / 离线环境地图空白
+    return map_assets.localize_map_assets(html, enabled=MAP_STATIC_ENABLED)
 
 
 def render_map(file_name: str, fallback_msg: str, height: int | None = None) -> None:
