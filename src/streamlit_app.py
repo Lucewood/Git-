@@ -66,6 +66,8 @@ st.set_page_config(
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 # 液态玻璃增强：光标跟随高光（渐进增强，不支持的浏览器自动退化为静态高光）
 widgets.pointer_glow()
+# 滚动分幕背景：按功能模块平滑换色（无脚本 / 减少动态效果时保留静态首屏配色）
+widgets.scroll_scene_gradient()
 charts.setup_plot_style()
 
 # 记录 Web 运行环境版本：排查静态 / 媒体文件（图表 PNG）下发问题时非常关键。
@@ -2656,6 +2658,7 @@ with st.sidebar:
         widgets.sidebar_nav(show_maps=show_maps)
 
     st.caption("导航使用页内锚点，切换模块不会重置筛选条件或重新训练模型。")
+    st.caption("🎞️ 页面背景会随滚动在 7 个功能分幕间平滑渐变。")
 
 # ---------------- 数据筛选 ----------------
 mask = pd.Series(True, index=df.index)

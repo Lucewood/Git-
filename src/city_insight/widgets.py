@@ -13,6 +13,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from .config import APP_VERSION, DATA_REF_YEAR
+from .scenes import scene_script
 
 # 液态玻璃语义色（与 styles.CUSTOM_CSS 中的 .tone-* 一一对应）。
 # 不传 tone 时由 CSS 按卡片所在列自动轮换配色，保证同一行玻璃色多元。
@@ -286,27 +287,47 @@ _POINTER_GLOW_SCRIPT = """
 """
 
 
-def pointer_glow() -> None:
-    """启用玻璃面的光标跟随高光（渐进增强，失败时自动降级）。
+def _inject_main_page_script(script: str) -> None:
+    """把脚本注入 Streamlit 主文档（优先 st.html，旧版退回零高度组件）。
 
-    优先使用 ``st.html(..., unsafe_allow_javascript=True)``：内容不放进 iframe，
-    不会在页面顶部留下额外的组件占位；Streamlit 版本较旧时不支持该参数，
-    退回零高度 components.html。两种方式都在主页面只绑定一次监听器
-    （以 ``window.__liquidGlassPointer`` 做幂等标记），Streamlit rerun 不会
-    重复叠加；只更新当前悬停元素的 CSS 变量，并用 requestAnimationFrame
-    合帧，避免逐事件重排。
+    ``st.html(..., unsafe_allow_javascript=True)`` 不会把内容放进 iframe，
+    因此不会在页面顶部留下额外的组件占位；Streamlit 版本较旧不支持该参数时，
+    退回 ``components.html``（脚本内部已用 ``window.parent`` 兼容两种环境）。
+    跨域 / 沙箱 / 注入失败都只失去对应的增强效果，不影响页面功能。
     """
     try:
-        st.html(_POINTER_GLOW_SCRIPT, unsafe_allow_javascript=True)
+        st.html(script, unsafe_allow_javascript=True)
         return
     except TypeError:  # 旧版本 Streamlit 没有 unsafe_allow_javascript 参数
         pass
     except Exception:  # pragma: no cover - 注入失败只失去增强效果
         return
     try:
-        components.html(_POINTER_GLOW_SCRIPT, height=0, scrolling=False)
+        components.html(script, height=0, scrolling=False)
     except Exception:  # pragma: no cover - 组件环境不可用时只失去增强效果
         pass
+
+
+def pointer_glow() -> None:
+    """启用玻璃面的光标跟随高光（渐进增强，失败时自动降级）。
+
+    两种注入方式都在主页面只绑定一次监听器（以 ``window.__liquidGlassPointer``
+    做幂等标记），Streamlit rerun 不会重复叠加；只更新当前悬停元素的 CSS 变量，
+    并用 requestAnimationFrame 合帧，避免逐事件重排。
+    """
+    _inject_main_page_script(_POINTER_GLOW_SCRIPT)
+
+
+def scroll_scene_gradient() -> None:
+    """启用「分幕」滚动渐变背景（渐进增强，失败时保留 CSS 首屏配色）。
+
+    脚本按真实章节锚点（scenes.SCENE_PALETTES）计算当前 / 下一分幕的位置，
+    章节前半段保持本幕主色，后半段（最多约 0.8 屏）平滑过渡到下一幕：翻到
+    下一功能部分时背景连续换色且有明显区分度。只读取 DOM 几何位置，不修改
+    页面结构或业务数据；以 ``window.__citySceneGradient`` 保证重复注入幂等，
+    并在系统开启「减少动态效果」时完全跳过。
+    """
+    _inject_main_page_script(scene_script())
 
 
 def insight_box(html: str, tone: str | None = None) -> None:

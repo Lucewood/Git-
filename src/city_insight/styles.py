@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+from .scenes import scene_root_css
+
 CUSTOM_CSS = """
 <style>
     /* =====================================================================
@@ -53,8 +55,15 @@ CUSTOM_CSS = """
     .stApp {
         isolation: isolate;
         color: var(--ink-700);
-        background-color: #eef2fa;
-        background-image: linear-gradient(158deg, #f9fbff 0%, #eef2fb 46%, #f7f1fb 100%);
+        /* 分幕背景：--scene-* 由 scenes.scene_script() 随滚动逐帧插值；
+           无脚本 / 减少动态效果时使用 :root 的首屏静态配色（见文件末尾）。 */
+        background-color: var(--scene-base, #e2ebfd);
+        background-image: linear-gradient(
+            162deg,
+            var(--scene-base, #e2ebfd) 0%,
+            var(--scene-deep, #f2f6ff) 52%,
+            var(--scene-base, #e2ebfd) 100%
+        );
         background-attachment: fixed;
     }
     .stApp::before {
@@ -64,10 +73,11 @@ CUSTOM_CSS = """
         z-index: -1;
         pointer-events: none;
         background:
-            radial-gradient(38% 38% at 24% 26%, rgba(104, 150, 255, 0.50), transparent 68%),
-            radial-gradient(34% 34% at 76% 20%, rgba(255, 158, 196, 0.42), transparent 70%),
-            radial-gradient(36% 36% at 22% 78%, rgba(86, 222, 200, 0.36), transparent 70%),
-            radial-gradient(38% 38% at 80% 82%, rgba(164, 140, 255, 0.40), transparent 70%);
+            radial-gradient(38% 38% at 24% 26%, var(--scene-glow-a, rgba(74, 124, 255, 0.54)), transparent 68%),
+            radial-gradient(34% 34% at 76% 20%, var(--scene-glow-b, rgba(126, 108, 255, 0.40)), transparent 70%),
+            radial-gradient(36% 36% at 22% 78%, var(--scene-glow-b, rgba(126, 108, 255, 0.40)), transparent 70%),
+            radial-gradient(38% 38% at 80% 82%, var(--scene-glow-a, rgba(74, 124, 255, 0.54)), transparent 70%);
+        opacity: var(--scene-glow-opacity, 0.6);
         animation: auroraFloat 34s ease-in-out infinite alternate;
         will-change: transform;
     }
@@ -101,9 +111,9 @@ CUSTOM_CSS = """
     [data-testid="stHeader"] {
         background: linear-gradient(
             180deg,
-            rgba(244, 247, 255, 0.9) 0%,
-            rgba(244, 247, 255, 0.5) 58%,
-            rgba(244, 247, 255, 0) 100%
+            rgba(255, 255, 255, 0.86) 0%,
+            rgba(255, 255, 255, 0.42) 58%,
+            rgba(255, 255, 255, 0) 100%
         ) !important;
         backdrop-filter: blur(8px);
     }
@@ -587,8 +597,13 @@ CUSTOM_CSS = """
         z-index: 2147483000;
         transform: scaleX(0);
         transform-origin: 0 50%;
-        background: linear-gradient(90deg, #6ea8ff, #8b7cf6 42%, #3fd0bd 74%, #ff9ec4);
-        box-shadow: 0 0 14px rgba(110, 150, 255, 0.55);
+        background: linear-gradient(
+            90deg,
+            var(--scene-accent, #6ea8ff),
+            var(--scene-glow-b, #8b7cf6) 55%,
+            var(--scene-accent, #3fd0bd)
+        );
+        box-shadow: 0 0 14px var(--scene-glow-a, rgba(110, 150, 255, 0.55));
         pointer-events: none;
     }
     @supports (animation-timeline: scroll()) {
@@ -1442,7 +1457,7 @@ CUSTOM_CSS = """
     }
     [data-testid="stImageContainer"] img,
     [data-testid="stImages"] img { border-radius: var(--radius-sm); }
-    [data-testid="stImageCaption"] { color: #4c5977 !important; }
+    [data-testid="stImageCaption"] { color: #3d4b68 !important; }
 
     /* HTML 地图（pyecharts iframe） */
     [data-testid="stIFrame"] {
@@ -1501,7 +1516,7 @@ CUSTOM_CSS = """
 
     [data-testid="stCaptionContainer"] p,
     [data-testid="stCaptionContainer"] {
-        color: #4c5977 !important;
+        color: #3d4b68 !important;
     }
     [data-testid="stMarkdownContainer"] code {
         padding: 0.1rem 0.36rem;
@@ -1759,3 +1774,7 @@ CUSTOM_CSS = """
     /* ===================================================================== */
 </style>
 """
+
+# 在 </style> 前注入由 scenes.SCENE_PALETTES 生成的首屏 `--scene-*` 变量：
+# CSS 静态兜底与滚动脚本共用同一份配色数据源，避免两处手写颜色漂移。
+CUSTOM_CSS = CUSTOM_CSS.replace("</style>", scene_root_css() + "</style>")

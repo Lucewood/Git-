@@ -30,8 +30,13 @@
 
 视觉上采用 Apple 式「液态玻璃」风格：极光背景 + 半透明玻璃面板 + 曲面内高光，
 并叠加**光标跟随高光、悬停扫光、章节滚动显现、Hero 棱镜光晕与星尘、指标卡错峰入场**等动效。
+背景还支持**分幕滚动渐变**：页面按概览 / 城市洞察 / 城市排行 / 房价预测 / 决策建议 /
+地图与数据 / 数据浏览分为 7 幕，每幕拥有独立的浅色主调（晨雾蓝 → 薄荷绿 → 暖琥珀 →
+紫罗兰 → 玫瑰粉 → 湖水青 → 暮色砂）；章节前半段保持本幕主色，后半段
+（最多约 0.8 屏）平滑过渡到下一幕，并同步到极光光晕与顶部进度条，
+每幕基色与正文对比度均 ≥ 7:1（WCAG AAA）。
 所有装饰性动画都遵循系统的「减少动态效果」设置（`prefers-reduced-motion`），
-触屏设备与不支持动效的浏览器会自动降级为静态玻璃质感。
+此时背景退回首屏静态配色；触屏设备与不支持动效的浏览器同样会自动降级为静态玻璃质感。
 
 ---
 
@@ -55,6 +60,7 @@
 │       ├── ai_advisor.py         # 本地城市检索 + DeepSeek 提示词与 Chat 客户端
 │       ├── charts.py             # Matplotlib / Seaborn 图表工厂
 │       ├── widgets.py            # Streamlit UI 组件封装
+│       ├── scenes.py             # 滚动分幕背景配色与换色脚本
 │       └── styles.py             # 页面 CSS
 ├── assets/fonts/                 # 内置中文字体（Noto Sans SC + OFL 许可证）
 ├── data/                         # 数据文件 + metadata.json 数据字典
@@ -177,6 +183,7 @@ pytest -v
 
 - `tests/test_data_loader.py`：数据加载 / 合并 / 派生指标 / 质量校验 / 支柱产业字段补位与健康检查
 - `tests/test_analysis.py`：相关、异常值、聚合等纯函数逻辑
+- `tests/test_scenes.py`：滚动分幕配色顺序 / 相邻色差 / 正文对比度 / CSS 变量与脚本接线
 - `tests/test_forecast.py`：房价历史加载、特征工程、模型训练与递归预测
 - `tests/test_charts.py`：图表工厂返回合法 Figure
 - `tests/test_crawler.py`：爬虫抓取策略、双解析器回退、页面解析与清洗
